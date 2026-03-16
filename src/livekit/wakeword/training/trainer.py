@@ -431,8 +431,8 @@ class WakeWordTrainer:
         # Wrap with quantization-aware training
         try:
             qat_model = tfmot.quantization.keras.quantize_model(base_model)
-        except Exception:
-            logger.warning("Failed to apply QAT (custom layers not supported), skipping")
+        except Exception as exc:
+            logger.warning("Failed to apply QAT, skipping: %s", exc)
             return
 
         qat_lr = self.config.learning_rate * 0.001
