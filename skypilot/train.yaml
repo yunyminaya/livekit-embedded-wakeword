@@ -33,14 +33,18 @@ run: |
   ln -sfn ${DATA_DIR} data
   ln -sfn ${OUTPUT_DIR} output
   uv run livekit-wakeword run configs/${CONFIG_FILE}
-  mkdir -p /outputs/${MODEL_NAME}
-  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.weights.h5 /outputs/${MODEL_NAME}/
-  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.tflite /outputs/${MODEL_NAME}/
-  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_metrics.json /outputs/${MODEL_NAME}/
-  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_det.png /outputs/${MODEL_NAME}/
-  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_eval.json /outputs/${MODEL_NAME}/
+  # Save artifacts into a workspace-scoped directory for separation
+  ARTIFACT_DIR=/outputs/${WORKSPACE}/${MODEL_NAME}
+  mkdir -p ${ARTIFACT_DIR}
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.weights.h5 ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.tflite ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_metrics.json ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_det.png ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_eval.json ${ARTIFACT_DIR}/
+  cp configs/${CONFIG_FILE} ${ARTIFACT_DIR}/config.yaml
 
 envs:
+  WORKSPACE: livekit-embedded-wakeword
   CONFIG_FILE: prod.yaml
   MODEL_NAME: hey_livekit
   DATA_DIR: ~/persistent/data
