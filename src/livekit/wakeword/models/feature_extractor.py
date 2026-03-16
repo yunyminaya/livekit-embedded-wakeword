@@ -40,6 +40,11 @@ LOWER_BAND_LIMIT = 125.0
 # pymicro-features hardcoded step size
 _PYMICRO_STEP_MS = 10
 
+# pymicro-features auto-scales uint16 output by this factor.
+# We undo it to match the unscaled convention used by microWakeWord's
+# precomputed features and TF audio_microfrontend(out_type=tf.float32).
+_UINT16_TO_FLOAT_SCALE = 0.0390625  # = 1/25.6
+
 
 def compute_n_frames(
     total_samples: int,
@@ -128,6 +133,12 @@ def _generate_features_pymicro(
         return np.zeros((0, NUM_CHANNELS), dtype=np.float32)
 
     arr = np.array(features, dtype=np.float32)
+
+    # pymicro-features outputs already-scaled floats (uint16 * 0.0390625, range ~0-26).
+    # The microWakeWord precomputed features dataset and TF audio_microfrontend op
+    # (with out_type=tf.float32) both output unscaled values (range ~0-660).
+    # Undo the scaling so all backends produce consistent unscaled features.
+    arr = arr / _UINT16_TO_FLOAT_SCALE
 
     # pymicro-features always uses 10ms hop. Subsample if a larger step is needed.
     if step_ms > _PYMICRO_STEP_MS:

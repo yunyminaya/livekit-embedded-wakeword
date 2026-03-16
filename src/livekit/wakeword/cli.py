@@ -191,6 +191,10 @@ def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
 
         all_specs: list[np.ndarray] = []
         for i in range(n_samples):
+            # Dataset stores raw uint16 microfrontend output (range ~0-660).
+            # Cast to float32 but do NOT scale by 0.0390625 — microWakeWord
+            # trains on unscaled values, and our MicroFrontend backends also
+            # produce unscaled output for consistency.
             spec = np.array(mmap_data[i], dtype=np.float32)
             # Pad or truncate to canonical n_frames
             if spec.shape[0] >= n_frames:
