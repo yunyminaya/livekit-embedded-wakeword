@@ -1,13 +1,24 @@
 """Micro-speech spectrogram frontend for wake word detection.
 
-Computes a mel-frequency spectrogram matching the micro_speech TFLite
-preprocessor parameters used by microWakeWord:
-  - 16 kHz sample rate
-  - 30 ms window (480 samples), 20 ms hop (320 samples)
-  - 40 mel-frequency channels, 125–7500 Hz
-  - Log compression
+Uses the TFLite Micro microfrontend to compute filterbank features matching
+the microWakeWord training pipeline exactly.
 
-For a 2.0 s clip (32 000 samples) this produces 99 frames × 40 features.
+Two backends are supported:
+
+1. **TensorFlow** ``audio_microfrontend`` op (primary for training) — supports
+   configurable ``window_step`` (20 ms default).
+2. **pymicro-features** C extension (lightweight inference) — hardcoded to
+   10 ms hop; frames are subsampled to match the configured step.
+
+Parameters (matching microWakeWord / ESPHome micro_wake_word):
+  - 16 kHz sample rate
+  - 30 ms window
+  - 20 ms hop (default, configurable)
+  - 40 filterbank channels, 125–7500 Hz
+  - PCAN gain control enabled
+  - Log scale with shift=6
+
+For a 2.0 s clip (32 000 samples) with 20 ms hop this produces 99 frames × 40 features.
 """
 
 from __future__ import annotations
@@ -26,51 +37,8 @@ NUM_CHANNELS = 40
 UPPER_BAND_LIMIT = 7500.0
 LOWER_BAND_LIMIT = 125.0
 
-
-def _hz_to_mel(hz: float) -> float:
-    """Convert frequency in Hz to mel scale."""
-    return 2595.0 * np.log10(1.0 + hz / 700.0)
-
-
-def _mel_to_hz(mel: float) -> float:
-    """Convert mel scale to frequency in Hz."""
-    return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
-
-
-def _build_mel_filterbank(
-    num_fft_bins: int,
-    num_channels: int = NUM_CHANNELS,
-    sample_rate: int = SAMPLE_RATE,
-    lower_hz: float = LOWER_BAND_LIMIT,
-    upper_hz: float = UPPER_BAND_LIMIT,
-) -> np.ndarray:
-    """Build a mel-spaced triangular filterbank matrix.
-
-    Returns:
-        (num_channels, num_fft_bins) filterbank weights.
-    """
-    low_mel = _hz_to_mel(lower_hz)
-    high_mel = _hz_to_mel(upper_hz)
-
-    # num_channels + 2 points to define num_channels triangular filters
-    mel_points = np.linspace(low_mel, high_mel, num_channels + 2)
-    hz_points = np.array([_mel_to_hz(m) for m in mel_points])
-    bin_points = np.floor((num_fft_bins * 2) * hz_points / sample_rate).astype(int)
-
-    filterbank = np.zeros((num_channels, num_fft_bins), dtype=np.float32)
-    for i in range(num_channels):
-        left = bin_points[i]
-        center = bin_points[i + 1]
-        right = bin_points[i + 2]
-
-        for j in range(left, center):
-            if center > left:
-                filterbank[i, j] = (j - left) / (center - left)
-        for j in range(center, right):
-            if right > center:
-                filterbank[i, j] = (right - j) / (right - center)
-
-    return filterbank
+# pymicro-features hardcoded step size
+_PYMICRO_STEP_MS = 10
 
 
 def compute_n_frames(
@@ -85,13 +53,101 @@ def compute_n_frames(
     return max(0, (total_samples - window_samples) // hop_samples + 1)
 
 
+def _generate_features_tf(
+    audio_int16: np.ndarray,
+    step_ms: int = WINDOW_STEP_MS,
+) -> np.ndarray:
+    """Generate features using TensorFlow's audio_microfrontend op.
+
+    This is the same algorithm as pymicro-features but implemented as a TF op,
+    with configurable step size.
+
+    Args:
+        audio_int16: int16 audio samples at 16 kHz.
+        step_ms: Hop size in milliseconds (default 20).
+
+    Returns:
+        (N_frames, 40) float32 spectrogram features.
+    """
+    import tensorflow as tf
+    from tensorflow.lite.experimental.microfrontend.python.ops import (  # type: ignore[import-untyped]
+        audio_microfrontend as frontend_op,
+    )
+
+    with tf.device("/cpu:0"):
+        result = frontend_op.audio_microfrontend(
+            tf.convert_to_tensor(audio_int16),
+            sample_rate=SAMPLE_RATE,
+            window_size=WINDOW_SIZE_MS,
+            window_step=step_ms,
+            num_channels=NUM_CHANNELS,
+            upper_band_limit=UPPER_BAND_LIMIT,
+            lower_band_limit=LOWER_BAND_LIMIT,
+            enable_pcan=True,
+            min_signal_remaining=0.05,
+            out_scale=1,
+            out_type=tf.float32,
+        )
+        return result.numpy()
+
+
+def _generate_features_pymicro(
+    audio_int16: np.ndarray,
+    step_ms: int = WINDOW_STEP_MS,
+) -> np.ndarray:
+    """Generate features using pymicro-features (C extension).
+
+    The pymicro-features package wraps the TFLite Micro microfrontend C library.
+    It is hardcoded to 10 ms hop.  When step_ms > 10, frames are subsampled
+    to approximate the requested step.
+
+    Args:
+        audio_int16: int16 audio samples at 16 kHz.
+        step_ms: Desired hop size in milliseconds (default 20).
+
+    Returns:
+        (N_frames, 40) float32 spectrogram features.
+    """
+    from pymicro_features import MicroFrontend as _PMF
+
+    audio_bytes = audio_int16.tobytes()
+    frontend = _PMF()
+
+    features: list[list[float]] = []
+    audio_idx = 0
+    chunk_bytes = 160 * 2  # 10ms of int16 audio = 160 samples * 2 bytes
+    num_bytes = len(audio_bytes)
+
+    while audio_idx + chunk_bytes <= num_bytes:
+        result = frontend.process_samples(audio_bytes[audio_idx : audio_idx + chunk_bytes])
+        audio_idx += result.samples_read * 2
+        if result.features:
+            features.append(result.features)
+
+    if not features:
+        return np.zeros((0, NUM_CHANNELS), dtype=np.float32)
+
+    arr = np.array(features, dtype=np.float32)
+
+    # pymicro-features always uses 10ms hop. Subsample if a larger step is needed.
+    if step_ms > _PYMICRO_STEP_MS:
+        subsample_factor = step_ms // _PYMICRO_STEP_MS
+        arr = arr[::subsample_factor]
+
+    return arr
+
+
 class MicroFrontend:
-    """Micro-speech spectrogram frontend (pure numpy).
+    """Micro-speech spectrogram frontend using the TFLite Micro microfrontend.
 
-    Computes log-mel spectrogram features matching the micro_speech
-    TFLite preprocessing model parameters.
+    Uses TensorFlow's ``audio_microfrontend`` op as the primary backend
+    (supports configurable step size), falling back to ``pymicro-features``
+    (C extension, subsampled from 10 ms to the configured step).
 
-    Output: (batch, N_frames, 40) float32 log-mel features
+    Both backends produce the same filterbank features matching the on-device
+    ESPHome implementation and microWakeWord's precomputed training features.
+
+    Output: (batch, N_frames, 40) float32 spectrogram features
     """
 
     def __init__(
@@ -100,93 +156,90 @@ class MicroFrontend:
         window_size_ms: int = WINDOW_SIZE_MS,
         window_step_ms: int = WINDOW_STEP_MS,
         num_channels: int = NUM_CHANNELS,
-        upper_band_limit: float = UPPER_BAND_LIMIT,
-        lower_band_limit: float = LOWER_BAND_LIMIT,
     ):
         self.sample_rate = sample_rate
         self.window_size_ms = window_size_ms
         self.window_step_ms = window_step_ms
         self.num_channels = num_channels
 
-        self._window_samples = window_size_ms * sample_rate // 1000
-        self._hop_samples = window_step_ms * sample_rate // 1000
-        self._fft_size = 1 << (self._window_samples - 1).bit_length()  # next power of 2
-        self._num_fft_bins = self._fft_size // 2 + 1
-
-        # Hann window
-        self._window = np.hanning(self._window_samples).astype(np.float32)
-
-        # Mel filterbank: (num_channels, num_fft_bins)
-        self._filterbank = _build_mel_filterbank(
-            num_fft_bins=self._num_fft_bins,
-            num_channels=num_channels,
-            sample_rate=sample_rate,
-            lower_hz=lower_band_limit,
-            upper_hz=upper_band_limit,
-        )
-
+        # Detect available backend
+        self._backend = self._detect_backend()
         logger.info(
-            "MicroFrontend: %d ms window, %d ms hop, %d channels, FFT=%d",
+            "MicroFrontend: %d ms window, %d ms hop, %d channels, backend=%s",
             window_size_ms,
             window_step_ms,
             num_channels,
-            self._fft_size,
+            self._backend,
         )
 
+    @staticmethod
+    def _detect_backend() -> str:
+        """Detect best available feature generation backend."""
+        try:
+            from tensorflow.lite.experimental.microfrontend.python.ops import (  # type: ignore[import-untyped]
+                audio_microfrontend as _op,  # noqa: F401
+            )
+
+            return "tensorflow"
+        except (ImportError, ModuleNotFoundError):
+            pass
+        try:
+            from pymicro_features import MicroFrontend as _MF  # noqa: F401
+
+            return "pymicro-features"
+        except ImportError:
+            pass
+        raise ImportError(
+            "No microfrontend backend available. Install one of:\n"
+            "  pip install tensorflow          (recommended, native step_ms support)\n"
+            "  pip install pymicro-features    (lightweight C extension, 10ms hop)\n"
+        )
+
+    def _generate_features(self, audio_int16: np.ndarray) -> np.ndarray:
+        """Generate features for a single audio clip."""
+        if self._backend == "tensorflow":
+            return _generate_features_tf(audio_int16, self.window_step_ms)
+        else:
+            return _generate_features_pymicro(audio_int16, self.window_step_ms)
+
     def __call__(self, audio: np.ndarray) -> np.ndarray:
-        """Compute log-mel spectrogram features.
+        """Compute spectrogram features.
 
         Args:
-            audio: float32 audio at 16 kHz.
+            audio: Audio at 16 kHz. Can be float32 [-1, 1] or int16.
                 Shape (samples,) or (batch, samples).
 
         Returns:
-            (batch, N_frames, num_channels) log-mel features.
+            (batch, N_frames, num_channels) float32 spectrogram features.
         """
         if audio.ndim == 1:
             audio = audio[np.newaxis, :]
 
-        audio = audio.astype(np.float32)
+        # Convert float32 to int16 (matching microWakeWord convention)
+        if audio.dtype in (np.float32, np.float64):
+            audio = np.clip(audio * 32768, -32768, 32767).astype(np.int16)
+
         batch_size = audio.shape[0]
         results = []
 
         for b in range(batch_size):
-            signal = audio[b]
-            n_frames = compute_n_frames(
-                len(signal), self.window_size_ms, self.window_step_ms, self.sample_rate
-            )
+            features = self._generate_features(audio[b])
+            results.append(features)
 
-            if n_frames == 0:
-                results.append(
-                    np.zeros((0, self.num_channels), dtype=np.float32)
-                )
-                continue
+        # Pad to uniform frame count within the batch
+        if results:
+            max_frames = max(f.shape[0] for f in results)
+            padded = []
+            for f in results:
+                if f.shape[0] < max_frames:
+                    pad = np.zeros(
+                        (max_frames - f.shape[0], self.num_channels), dtype=np.float32
+                    )
+                    f = np.concatenate([pad, f], axis=0)
+                padded.append(f)
+            return np.stack(padded, axis=0)
 
-            # Frame the signal
-            frames = np.stack(
-                [
-                    signal[i * self._hop_samples : i * self._hop_samples + self._window_samples]
-                    for i in range(n_frames)
-                ],
-                axis=0,
-            )  # (n_frames, window_samples)
-
-            # Apply Hann window
-            frames = frames * self._window
-
-            # FFT → magnitude spectrum
-            spectrum = np.fft.rfft(frames, n=self._fft_size)
-            magnitude = np.abs(spectrum)  # (n_frames, num_fft_bins)
-
-            # Apply mel filterbank
-            mel_energies = magnitude @ self._filterbank.T  # (n_frames, num_channels)
-
-            # Log compression
-            log_mel = np.log(mel_energies + 1e-6)
-
-            results.append(log_mel.astype(np.float32))
-
-        return np.stack(results, axis=0)  # (batch, n_frames, num_channels)
+        return np.zeros((batch_size, 0, self.num_channels), dtype=np.float32)
 
     @property
     def n_frames_for_duration(self) -> dict[float, int]:

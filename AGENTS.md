@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-livekit-wakeword — wake word detection library using microWakeWord-based architecture: pure-numpy log-mel spectrogram frontend → TensorFlow/Keras CNN (Inception/MixedNet) classifier → TFLite export with streaming inference. VITS TTS data generation pipeline for synthetic training data.
+livekit-wakeword — wake word detection library using microWakeWord-based architecture: TFLite Micro microfrontend (via pymicro-features) → TensorFlow/Keras CNN (Inception/MixedNet) classifier → TFLite export with streaming inference. VITS TTS data generation pipeline for synthetic training data.
 
 ## Commands
 
@@ -40,14 +40,14 @@ uv run livekit-wakeword run <config>      # Full pipeline (generate→augment→
 
 ### Processing Pipeline (inference)
 ```
-Raw audio (16kHz) → MicroFrontend (numpy) → Classifier (TFLite) → [0,1]
+Raw audio (16kHz) → MicroFrontend (pymicro-features) → Classifier (TFLite) → [0,1]
                     30ms window, 20ms hop    99×40 → 1 score
                     40-channel log-mel
 ```
 
 ### Processing Pipeline (training)
 ```
-Raw audio (16kHz) → MicroFrontend (numpy) → Classifier (Keras) → [0,1]
+Raw audio (16kHz) → MicroFrontend (pymicro-features) → Classifier (Keras) → [0,1]
                     30ms window, 20ms hop    99×40 → 1 score
                     40-channel log-mel       Inception or MixedNet CNN
 ```
@@ -57,7 +57,7 @@ Raw audio (16kHz) → MicroFrontend (numpy) → Classifier (Keras) → [0,1]
 - **`config.py`** — Pydantic models + YAML loading (`load_config(path)`)
 - **`cli.py`** — Typer CLI with all commands
 - **`models/`**
-  - `feature_extractor.py` — `MicroFrontend` (pure numpy log-mel spectrogram, 30ms/20ms/40ch)
+  - `feature_extractor.py` — `MicroFrontend` (TFLite Micro microfrontend via pymicro-features, 30ms/20ms/40ch)
   - `classifier.py` — `InceptionClassifier` (CNN + SubSpectralNorm), `MixedNetClassifier` (MixConv + SE attention), `build_classifier()` factory
   - `pipeline.py` — `WakeWordClassifier` (Keras training wrapper for classifier head)
 - **`data/`**
@@ -77,13 +77,13 @@ Raw audio (16kHz) → MicroFrontend (numpy) → Classifier (Keras) → [0,1]
 
 ### Key Design Decisions
 
-- **Feature extraction is pure numpy** — no model files needed. `MicroFrontend` computes 40-channel log-mel spectrograms matching micro_speech TFLite parameters.
+- **Feature extraction uses the TFLite Micro microfrontend** C library (via `pymicro-features`), identical to the on-device ESPHome implementation. Fallback: TensorFlow `audio_microfrontend` op.
 - **Spectrogram shape**: `(batch, 99, 40)` for 2.0s clips — 99 frames (30ms window, 20ms hop) × 40 mel channels.
 - **Model sizes** (tiny/small/medium/large) map to `(filters, n_blocks)` in config. Factory: `build_classifier(model_type, model_size, n_frames, n_features)`.
 - **Training loss**: Focal loss (gamma=2.0) with linearly increasing negative class weight + mixup + label smoothing.
 - **Checkpoint averaging**: final model averages top checkpoints by 90th-pct accuracy and 10th-pct FPPH.
 - **Config format**: YAML loaded via `load_config(path)`. See `configs/prod.yaml` for reference.
-- **Dependency separation**: Core inference needs only numpy + tflite-runtime. Training needs tensorflow. Data generation needs torch (for VITS TTS only).
+- **Dependency separation**: Core inference needs only numpy + pymicro-features + tflite-runtime. Training needs tensorflow. Data generation needs torch (for VITS TTS only).
 
 ## Documentation
 

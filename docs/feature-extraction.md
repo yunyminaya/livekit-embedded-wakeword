@@ -1,6 +1,6 @@
 # Feature Extraction Pipeline
 
-Feature extraction converts augmented audio clips into fixed-size log-mel spectrogram arrays using a pure-numpy frontend (`MicroFrontend`), matching the micro_speech TFLite preprocessor parameters.
+Feature extraction converts augmented audio clips into fixed-size spectrogram arrays using the TFLite Micro microfrontend — the same C library used on-device by ESPHome's `micro_wake_word` component.
 
 **Source:** `src/livekit/wakeword/data/features.py`, `src/livekit/wakeword/models/feature_extractor.py`
 
@@ -10,9 +10,10 @@ Feature extraction converts augmented audio clips into fixed-size log-mel spectr
 .wav files (16kHz, ~2s)
     │
     ▼
-MicroFrontend (pure numpy)
+MicroFrontend (pymicro-features C library)
     │  30ms window, 20ms hop
-    │  40-channel log-mel
+    │  40 filterbank channels
+    │  PCAN + noise reduction + log scale
     │  (batch, N_frames, 40)
     ▼
 Pad/truncate to 99 frames
@@ -25,35 +26,52 @@ Save as .npy
 
 **Source:** `src/livekit/wakeword/models/feature_extractor.py`
 
-Computes log-mel spectrogram features using pure numpy operations, matching the micro_speech TFLite preprocessing model parameters used by microWakeWord.
+Computes spectrogram features using the TFLite Micro microfrontend, matching microWakeWord's training pipeline and the on-device ESPHome implementation exactly.
 
-### What is a Log-Mel Spectrogram?
+### Backends
 
-A log-mel spectrogram is a visual representation of audio that mimics how humans perceive sound. The calculation proceeds in stages:
+The `MicroFrontend` class supports two backends (tried in order):
 
-1. **Framing**: The audio is sliced into overlapping windows (30ms with 20ms hop).
+| Backend | Package | Description |
+|---------|---------|-------------|
+| **pymicro-features** (primary) | `pymicro-features>=0.3` | CPython extension wrapping the TFLite Micro microfrontend C library |
+| **TensorFlow op** (fallback) | `tensorflow>=2.15` | `audio_microfrontend` op from `tensorflow.lite.experimental.microfrontend` |
 
-2. **Windowing**: A Hann window is applied to each frame to reduce spectral leakage.
+Both produce identical output. The `pymicro-features` package is recommended for inference (lightweight, no TensorFlow dependency). TensorFlow is available as a fallback during training.
 
-3. **FFT**: Fast Fourier Transform extracts frequency content from each windowed frame.
+### What Does the Microfrontend Compute?
 
-4. **Magnitude Spectrum**: The absolute value of the FFT output gives energy at each frequency bin.
+The microfrontend is a lightweight signal processing pipeline (not a neural network):
 
-5. **Mel Filterbank**: Triangular filters spaced on the **mel scale** are applied — a perceptual scale where equal distances sound equally spaced to humans. The mel scale: `mel = 2595 * log10(1 + f/700)`.
+1. **Windowing**: 30ms Hann-windowed frames with configurable hop (default 20ms).
 
-6. **Log Compression**: `log(mel_energies + ε)` mimics how human ears perceive loudness logarithmically.
+2. **FFT**: Fast Fourier Transform extracts frequency content from each frame.
+
+3. **Filterbank**: 40 triangular filters spaced on a mel-like scale from 125 Hz to 7,500 Hz.
+
+4. **Noise Reduction**: Smoothed noise floor estimation with configurable parameters (smoothing bits=10, even=0.025, odd=0.06).
+
+5. **PCAN Gain Control**: Per-Channel Automatic Noise-floor Cancellation normalizes each channel relative to its estimated noise floor (strength=0.95, offset=80.0).
+
+6. **Log Scaling**: Logarithmic compression with shift=6.
+
+7. **Output Scaling**: uint16 values are scaled to float32 by multiplying by 0.0390625 (= 1/25.6).
 
 ### Parameters
 
 | Parameter | Value |
 |-----------|-------|
 | Sample rate | 16,000 Hz |
-| Window size | 480 samples (30ms) |
-| Hop length | 320 samples (20ms) |
-| FFT size | 512 (next power of 2) |
-| Mel channels | 40 |
+| Window size | 30 ms (480 samples) |
+| Hop length | 20 ms (320 samples) |
+| Filterbank channels | 40 |
 | Frequency range | 125–7,500 Hz |
-| Compression | `log(x + 1e-6)` |
+| PCAN enabled | Yes |
+| PCAN strength | 0.95 |
+| Noise reduction | Enabled |
+| Log scale shift | 6 |
+| Output type | uint16 → float32 (× 0.0390625) |
+| Samples per C chunk | 160 (10ms) |
 
 ### How Frames Are Calculated
 
@@ -70,8 +88,6 @@ N_frames = floor((samples - window_size) / hop_size) + 1
 N_frames = floor((32000 - 480) / 320) + 1 = 99 frames
 ```
 
-Each frame represents 20ms of audio (the hop length).
-
 | Audio Duration | Samples | Frames | Action |
 |---------------|---------|--------|--------|
 | 2.0s | 32,000 | 99 | Use as-is |
@@ -81,17 +97,18 @@ Each frame represents 20ms of audio (the hop length).
 
 ### Input/Output
 
-- **Input:** `(batch, samples)` or `(samples,)` — float32 audio at 16kHz
-- **Output:** `(batch, N_frames, 40)` — log-mel features
+- **Input:** `(batch, samples)` or `(samples,)` — float32 [-1,1] or int16 audio at 16kHz
+- **Output:** `(batch, N_frames, 40)` — float32 spectrogram features
 
-### Mel Filterbank Construction
+Float32 input is automatically converted to int16 (matching microWakeWord convention).
 
-The filterbank is built with triangular filters spaced on the mel scale:
+### Why This Matters for Compatibility
 
-1. Convert lower (125 Hz) and upper (7,500 Hz) frequency limits to mel scale
-2. Create `num_channels + 2` linearly spaced points on the mel scale
-3. Convert back to Hz and map to FFT bin indices
-4. Build triangular filters with unit-area normalization
+Using the exact same microfrontend C library for both training and inference ensures:
+
+1. **Exact match with microWakeWord precomputed features** — the HuggingFace `kahrendt/microwakeword` dataset was generated with this same library
+2. **Exact match with on-device inference** — ESPHome's `micro_wake_word` component uses the same C code
+3. **No mismatch risk** — a numpy reimplementation would produce different values due to the noise reduction, PCAN, and log scaling specifics
 
 ## Frame Selection
 
@@ -104,11 +121,11 @@ After computing spectrograms, each clip is normalized to exactly 99 frames (for 
 
 Left-padding places zeros at the **beginning** of the sequence, so the real audio features occupy the **end** (most recent positions). This design choice has important implications:
 
-1. **Causal alignment**: The model learns that the pattern "silence → wake word" corresponds to a detection. Real audio naturally fills from the right as new frames arrive during streaming inference.
+1. **Causal alignment**: The model learns that the pattern "silence → wake word" corresponds to a detection.
 
-2. **Streaming compatibility**: At inference time, you're always asking "did the wake word just happen in the most recent audio?" Having the actual audio at the end of the sequence matches this temporal expectation.
+2. **Streaming compatibility**: At inference time, you're always asking "did the wake word just happen in the most recent audio?"
 
-3. **Consistent anchor point**: Regardless of clip length, the wake word utterance is always anchored to the end of the feature sequence, giving the classifier a consistent reference point.
+3. **Consistent anchor point**: Regardless of clip length, the wake word utterance is always anchored to the end of the feature sequence.
 
 ## Feature Extraction for Training
 

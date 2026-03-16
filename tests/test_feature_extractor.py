@@ -8,7 +8,7 @@ from livekit.wakeword.models.feature_extractor import MicroFrontend, compute_n_f
 
 
 class TestMicroFrontend:
-    """Test the pure-numpy micro_speech spectrogram frontend."""
+    """Test the TFLite Micro microfrontend spectrogram extractor."""
 
     def test_output_shape(self):
         frontend = MicroFrontend()
@@ -43,12 +43,16 @@ class TestMicroFrontend:
         spec2 = frontend(audio)
         np.testing.assert_allclose(spec1, spec2)
 
-    def test_custom_parameters(self):
-        """Custom window/hop parameters should work."""
-        frontend = MicroFrontend(window_size_ms=25, window_step_ms=10, num_channels=32)
+    def test_custom_step(self):
+        """Custom hop size should produce more frames."""
+        frontend_20 = MicroFrontend(window_step_ms=20)
+        frontend_10 = MicroFrontend(window_step_ms=10)
         audio = np.random.randn(16000).astype(np.float32)
-        spec = frontend(audio)
-        assert spec.shape[2] == 32
+        spec_20 = frontend_20(audio)
+        spec_10 = frontend_10(audio)
+        assert spec_10.shape[1] > spec_20.shape[1]
+        assert spec_20.shape[2] == 40
+        assert spec_10.shape[2] == 40
 
     def test_short_audio(self):
         """Very short audio should produce 0 frames."""

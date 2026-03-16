@@ -1,6 +1,6 @@
 # Architecture Overview
 
-livekit-wakeword uses a microWakeWord-inspired architecture. A pure-numpy log-mel spectrogram frontend feeds into TensorFlow/Keras CNN classifiers (Inception or MixedNet), which are exported to TFLite for lightweight streaming inference.
+livekit-wakeword uses a microWakeWord-based architecture. The TFLite Micro microfrontend (via `pymicro-features`) computes spectrogram features that feed into TensorFlow/Keras CNN classifiers (Inception or MixedNet), which are exported to TFLite for lightweight streaming inference.
 
 ## System Architecture
 
@@ -10,7 +10,7 @@ livekit-wakeword uses a microWakeWord-inspired architecture. A pure-numpy log-me
 
 ## Why This Architecture?
 
-- **Pure-numpy frontend** — no model files or runtime dependencies needed for feature extraction
+- **Microfrontend C library** — uses the same TFLite Micro microfrontend as on-device ESPHome, via `pymicro-features`
 - **TFLite inference** — lightweight runtime (~2 MB), runs on embedded devices and microcontrollers
 - **Streaming support** — 30ms incremental processing via ring buffer of spectrogram frames
 - **Separated dependencies** — core inference needs only numpy + tflite-runtime; training needs tensorflow; data generation needs torch (for VITS TTS only)
@@ -24,7 +24,7 @@ The CNN classifier is trained in TensorFlow/Keras for flexibility (focal loss, m
 | Stage | Output Shape | Description |
 |-------|-------------|-------------|
 | Raw audio | `(samples,)` | 16kHz float32 mono |
-| MicroFrontend | `(batch, N_frames, 40)` | 40 log-mel channels, 30ms window, 20ms hop |
+| MicroFrontend | `(batch, N_frames, 40)` | 40 filterbank channels, 30ms window, 20ms hop |
 | Classifier | `(batch, 1)` | Sigmoid confidence score |
 
 ### Spectrogram Parameters
@@ -37,7 +37,9 @@ The CNN classifier is trained in TensorFlow/Keras for flexibility (focal loss, m
 | FFT size | 512 |
 | Mel channels | 40 |
 | Frequency range | 125–7,500 Hz |
-| Compression | Log (with ε=1e-6) |
+| PCAN | Enabled (strength=0.95) |
+| Log scale | shift=6 |
+| Output scaling | uint16 × 0.0390625 → float32 |
 
 ### Frame Count
 
@@ -54,7 +56,7 @@ src/livekit/wakeword/
 ├── config.py                    Pydantic config models + YAML loading
 ├── cli.py                       Typer CLI (setup, generate, augment, train, export, eval, run)
 ├── models/
-│   ├── feature_extractor.py     MicroFrontend (pure numpy log-mel spectrogram)
+│   ├── feature_extractor.py     MicroFrontend (TFLite Micro microfrontend via pymicro-features)
 │   ├── classifier.py            InceptionClassifier, MixedNetClassifier, SubSpectralNorm
 │   └── pipeline.py              WakeWordClassifier (Keras training wrapper)
 ├── data/
@@ -78,7 +80,7 @@ src/livekit/wakeword/
 
 1. **[Data Generation](data-generation.md)** — Synthesize positive clips via VITS TTS with SLERP speaker blending + adversarial negatives
 2. **[Augmentation](augmentation.md)** — Apply pitch shift, EQ, RIR convolution, background mixing; align clips to training windows
-3. **[Feature Extraction](feature-extraction.md)** — Extract log-mel spectrograms through numpy frontend → `.npy` files
+3. **[Feature Extraction](feature-extraction.md)** — Extract spectrogram features through TFLite Micro microfrontend → `.npy` files
 4. **[Training](training.md)** — 3-phase adaptive training with focal loss, spectrogram mixup, and checkpoint averaging
 5. **[Export & Inference](export-and-inference.md)** — Export classifier to TFLite and run real-time streaming detection
 6. **[Evaluation](evaluation.md)** — DET curves, AUT, FPPH, and model comparison
