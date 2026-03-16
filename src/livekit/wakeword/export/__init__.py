@@ -1,9 +1,9 @@
-"""ONNX export and quantization."""
+"""TFLite export and quantization."""
 
-from .onnx import export_classifier, quantize_onnx, run_export
+from .tflite import export_classifier, quantize_tflite, run_export
 
 __all__ = [
     "export_classifier",
-    "quantize_onnx",
+    "quantize_tflite",
     "run_export",
 ]
