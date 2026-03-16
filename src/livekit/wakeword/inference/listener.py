@@ -16,9 +16,9 @@ from .model import WakeWordModel
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
-FRAME_SAMPLES = 1280  # 80ms per frame
+FRAME_SAMPLES = 480  # 30ms per frame (matches spectrogram window)
 CHUNK_SECONDS = 2.0
-# Number of frames that fill a ~2-second chunk (25 × 80ms = 2000ms)
+# Number of frames that fill a ~2-second chunk (66 × 30ms ≈ 2000ms)
 CHUNK_FRAMES = int(CHUNK_SECONDS * SAMPLE_RATE / FRAME_SAMPLES)
 
 
@@ -42,7 +42,7 @@ class WakeWordListener:
     Example:
         from livekit.wakeword import WakeWordModel, WakeWordListener
 
-        model = WakeWordModel(models=["hey_livekit.onnx"])
+        model = WakeWordModel(models=["hey_livekit.tflite"])
 
         async with WakeWordListener(model, threshold=0.5, debounce=2.0) as listener:
             while True:
@@ -120,7 +120,7 @@ class WakeWordListener:
         # Unblock if paused so the loop can see _running=False
         self._listening.set()
 
-        # 2. Let the loop exit naturally (worst case: one 80ms read finishes)
+        # 2. Let the loop exit naturally (worst case: one 30ms read finishes)
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=2.0)
