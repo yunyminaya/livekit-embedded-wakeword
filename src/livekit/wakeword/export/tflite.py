@@ -131,16 +131,8 @@ def export_qat_classifier(
     qat_model = tf_keras.models.load_model(str(qat_path))
     stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
 
-    n_frames = config.n_frames
-    n_channels = config.augmentation.num_channels
-
-    @tf.function(input_signature=[tf.TensorSpec(shape=[1, n_frames, n_channels], dtype=tf.float32)])
-    def serving_fn(x: tf.Tensor) -> tf.Tensor:
-        return stripped_model(x, training=False)
-
-    converter = tf.lite.TFLiteConverter.from_concrete_functions(
-        [serving_fn.get_concrete_function()]
-    )
+    # Use tf_keras-native converter (from_keras_model) to avoid Keras 2/3 op mismatch
+    converter = tf.lite.TFLiteConverter.from_keras_model(stripped_model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
     converter.inference_input_type = tf.int8
