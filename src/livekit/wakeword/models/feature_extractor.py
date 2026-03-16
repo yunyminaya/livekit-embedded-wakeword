@@ -174,7 +174,11 @@ class MicroFrontend:
 
     @staticmethod
     def _detect_backend() -> str:
-        """Detect best available feature generation backend."""
+        """Detect best available feature generation backend.
+
+        Prefers TensorFlow when installed (native step_ms support), falls
+        back to pymicro-features (core dependency, always available).
+        """
         try:
             from tensorflow.lite.experimental.microfrontend.python.ops import (  # type: ignore[import-untyped]
                 audio_microfrontend as _op,  # noqa: F401
@@ -183,17 +187,10 @@ class MicroFrontend:
             return "tensorflow"
         except (ImportError, ModuleNotFoundError):
             pass
-        try:
-            from pymicro_features import MicroFrontend as _MF  # noqa: F401
+        # pymicro-features is a core dependency — should always be available
+        from pymicro_features import MicroFrontend as _MF  # noqa: F401
 
-            return "pymicro-features"
-        except ImportError:
-            pass
-        raise ImportError(
-            "No microfrontend backend available. Install one of:\n"
-            "  pip install tensorflow          (recommended, native step_ms support)\n"
-            "  pip install pymicro-features    (lightweight C extension, 10ms hop)\n"
-        )
+        return "pymicro-features"
 
     def _generate_features(self, audio_int16: np.ndarray) -> np.ndarray:
         """Generate features for a single audio clip."""

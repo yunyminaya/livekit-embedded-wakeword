@@ -163,10 +163,6 @@ Uses PyAudio to capture from the default microphone:
 | Sample rate | 16,000 Hz |
 | Buffer size | 480 samples (30ms) |
 
-### TFLite Runtime
+### LiteRT Runtime
 
-The inference code supports three TFLite backends, tried in order:
-
-1. `tflite-runtime` — lightweight standalone interpreter
-2. `ai-edge-litert` — Google's edge runtime (used on macOS ARM)
-3. `tensorflow.lite` — full TensorFlow package (fallback)
+The inference code uses `ai-edge-litert` (Google's LiteRT, the successor to tflite-runtime) as the TFLite interpreter. This is a core dependency that works on all platforms.

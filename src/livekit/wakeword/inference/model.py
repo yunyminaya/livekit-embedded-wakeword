@@ -23,29 +23,10 @@ DEFAULT_N_FRAMES = compute_n_frames(int(2.0 * SAMPLE_RATE))
 
 
 def _load_tflite_interpreter(model_path: str | Path) -> object:
-    """Load a TFLite interpreter, trying tflite-runtime first, then tensorflow."""
-    model_path = str(model_path)
-    try:
-        from tflite_runtime.interpreter import Interpreter
+    """Load a LiteRT (TFLite) interpreter."""
+    from ai_edge_litert.interpreter import Interpreter  # type: ignore[import-untyped]
 
-        return Interpreter(model_path=model_path)
-    except ImportError:
-        pass
-    try:
-        from ai_edge_litert.interpreter import Interpreter  # type: ignore[import-untyped]
-
-        return Interpreter(model_path=model_path)
-    except ImportError:
-        pass
-    try:
-        import tensorflow as tf
-
-        return tf.lite.Interpreter(model_path=model_path)
-    except ImportError:
-        raise ImportError(
-            "No TFLite runtime found. Install one of: "
-            "tflite-runtime, ai-edge-litert, or tensorflow"
-        )
+    return Interpreter(model_path=str(model_path))
 
 
 class WakeWordModel:

@@ -26,8 +26,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "pymicro-features>=0.3",
-    "tflite-runtime>=2.14; platform_machine != 'arm64' or platform_system != 'Darwin'",
-    "ai-edge-litert>=1.0; platform_machine == 'arm64' and platform_system == 'Darwin'",
+    "ai-edge-litert>=1.0",
 ]
 
 [project.optional-dependencies]

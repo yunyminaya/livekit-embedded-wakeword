@@ -30,8 +30,17 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/f9/ba44382f353a2b845e9b6242750a7d56b0054ab6c6bcf53d20823bae58e4/ai_edge_litert-2.1.2-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:07c3f442212de1859dddbcd51ff90f2fcb3048d940a1bddbd6f13b04e5a79083", size = 13014557, upload-time = "2026-01-28T07:22:46.904Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/5a/57d9b8967fa5a2f3055ad3e7666446c8d2271446319e7f17c897b151544c/ai_edge_litert-2.1.2-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:7dc4afc4b67797e77d879e35ad558e60f746be7c1e616a6653bd2cbf1ffef9ad", size = 12633093, upload-time = "2026-01-28T07:05:38.638Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/a8/c8024c9657a76e3589cf2b8b21cbccdef0b9a64b74d98eebcabbbdfaeb7a/ai_edge_litert-2.1.2-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:b3ff3b12df45dfc540934e33bde9af474b0b4c12c3bb6112b251aaae4d2930a0", size = 16326113, upload-time = "2026-01-28T07:00:07.441Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/e5/19545796c4681afdcbdf9ee401c286e0b1a0811c468e66b71c555c19ca4c/ai_edge_litert-2.1.2-cp311-cp311-win_amd64.whl", hash = "sha256:f54eb3b4889f56e1e7012c5cda3e661122dba8fe962d612d3fb55266dc9d7e9a", size = 6075653, upload-time = "2026-01-28T09:38:37.279Z" },
     { url = "https://files.pythonhosted.org/packages/6d/59/5f65a091340c6abf26c66a11fc0c8ecbd264e93ad7293aaf1f1b6892cc00/ai_edge_litert-2.1.2-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:20c96357a7c61600e7ec94a8c131fee4c0a994132e5e6e436c7c7e93d3f31b22", size = 13016970, upload-time = "2026-01-28T07:22:48.654Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/36/8ff07084091272db4df8de3859149be3913a6eaf2939575bb4200379b808/ai_edge_litert-2.1.2-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:1b412368980b404aa051d09405abd473d3a15130db030938d26966f1a1e7c413", size = 12633952, upload-time = "2026-01-28T07:05:40.805Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/05/072e76dfa2bfd6aa4c5751f1b6d5ad11f74bba70177ad4c973b49678d4c2/ai_edge_litert-2.1.2-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:67db6de7c729bbe5a31c20adc573ce47b8aa6ea4b6bcfee0ab77ff1a51e20f2e", size = 16330794, upload-time = "2026-01-28T07:00:09.906Z" },
+    { url = "https://files.pythonhosted.org/packages/92/91/6056d84ccd8c64c72ba5dee93402a5ef828058737026b6a820e53c7a6ef2/ai_edge_litert-2.1.2-cp312-cp312-win_amd64.whl", hash = "sha256:f42037e3b090aa1c85816dab6fd1b58ef34978ae88ea35f435e17f679712aba9", size = 6077276, upload-time = "2026-01-28T09:38:38.97Z" },
     { url = "https://files.pythonhosted.org/packages/a0/c3/c004708dc361609e76788e2e0a46f598bb523fc301144e483121818f8798/ai_edge_litert-2.1.2-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:53bc721638a749bdfc0f5bce902313ec69871e0510893b563ee73f19a15ab690", size = 13017531, upload-time = "2026-01-28T07:22:50.787Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/ed/6763310cb4ea2d2e6cc61184127467e4c277ebbb8c49130eb3dfc6c1bb5c/ai_edge_litert-2.1.2-cp313-cp313-manylinux_2_27_aarch64.whl", hash = "sha256:6d760ef51c72f56b307fa6f1675a62f870a546515b1da0c0f282ca15ff1836c5", size = 12633904, upload-time = "2026-01-28T07:05:42.611Z" },
+    { url = "https://files.pythonhosted.org/packages/68/a3/e2bd759dc0fd3895b778b0480e6cae37bf5d4e50b611cb6a16d598992d02/ai_edge_litert-2.1.2-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:bcf96a0e2bd781b4e127155e3af3380617719ea89d41b65fc210d1039dcfa50e", size = 16330397, upload-time = "2026-01-28T07:00:12.33Z" },
+    { url = "https://files.pythonhosted.org/packages/11/0e/1f4579e4d48b50d943847221285fe75707045785b31304fd36a3b3ebef8f/ai_edge_litert-2.1.2-cp313-cp313-win_amd64.whl", hash = "sha256:9c5a2dd8e459af65ae177d76ddf881f0e946cda4a911c20a23d936dd30ddc67e", size = 6077157, upload-time = "2026-01-28T09:38:41.139Z" },
 ]
 
 [[package]]
@@ -1168,10 +1177,9 @@ wheels = [
 name = "livekit-wakeword"
 source = { editable = "." }
 dependencies = [
-    { name = "ai-edge-litert", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "ai-edge-litert" },
     { name = "numpy" },
     { name = "pymicro-features" },
-    { name = "tflite-runtime", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
 ]
 
 [package.optional-dependencies]
@@ -1216,7 +1224,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ai-edge-litert", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=1.0" },
+    { name = "ai-edge-litert", specifier = ">=1.0" },
     { name = "audiomentations", marker = "extra == 'train'", specifier = ">=0.36" },
     { name = "cmudict", marker = "extra == 'train'", specifier = ">=1.0" },
     { name = "huggingface-hub", marker = "extra == 'train'", specifier = ">=0.20" },
@@ -1236,7 +1244,6 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'train'", specifier = ">=69.0,<81" },
     { name = "soundfile", marker = "extra == 'train'", specifier = ">=0.12" },
     { name = "tensorflow", marker = "extra == 'train'", specifier = ">=2.15" },
-    { name = "tflite-runtime", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'", specifier = ">=2.14" },
     { name = "torch", marker = "extra == 'datagen'", specifier = ">=2.2" },
     { name = "tqdm", marker = "extra == 'train'", specifier = ">=4.60" },
     { name = "typer", marker = "extra == 'train'", specifier = ">=0.12" },
@@ -2940,19 +2947,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/46/79/cf31d7a93a8fdc6aa0fbb665be84426a8c5a557d9240b6239e9e11e35fc5/termcolor-3.3.0.tar.gz", hash = "sha256:348871ca648ec6a9a983a13ab626c0acce02f515b9e1983332b17af7979521c5", size = 14434, upload-time = "2025-12-29T12:55:21.882Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/d1/8bb87d21e9aeb323cc03034f5eaf2c8f69841e40e4853c2627edf8111ed3/termcolor-3.3.0-py3-none-any.whl", hash = "sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5", size = 7734, upload-time = "2025-12-29T12:55:20.718Z" },
-]
-
-[[package]]
-name = "tflite-runtime"
-version = "2.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/a6/02d68cb62cd221589a0ff055073251d883936237c9c990e34a1d7cecd06f/tflite_runtime-2.14.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:195ab752e7e57329a68e54dd3dd5439fad888b9bff1be0f0dc042a3237a90e4d", size = 2414486, upload-time = "2023-10-03T21:15:44.331Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/e9/5fc0435129c23c17551fcfadc82bd0d5482276213dfbc641f07b4420cb6d/tflite_runtime-2.14.0-cp311-cp311-manylinux_2_34_aarch64.whl", hash = "sha256:ce9fa5d770a9725c746dcbf6f59f3178233b3759f09982e8b2db8d2234c333b0", size = 2325913, upload-time = "2023-10-03T21:15:46.348Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/76/e246c39d92929655bac8878d76406d6fb0293c678237e55621e7ece4a269/tflite_runtime-2.14.0-cp311-cp311-manylinux_2_34_armv7l.whl", hash = "sha256:c4e66a74165b18089c86788400af19fa551768ac782d231a9beae2f6434f7949", size = 1820588, upload-time = "2023-10-03T21:15:48.399Z" },
 ]
 
 [[package]]

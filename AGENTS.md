@@ -83,7 +83,7 @@ Raw audio (16kHz) → MicroFrontend (pymicro-features) → Classifier (Keras) �
 - **Training loss**: Focal loss (gamma=2.0) with linearly increasing negative class weight + mixup + label smoothing.
 - **Checkpoint averaging**: final model averages top checkpoints by 90th-pct accuracy and 10th-pct FPPH.
 - **Config format**: YAML loaded via `load_config(path)`. See `configs/prod.yaml` for reference.
-- **Dependency separation**: Core inference needs only numpy + pymicro-features + tflite-runtime. Training needs tensorflow. Data generation needs torch (for VITS TTS only).
+- **Dependency separation**: Core inference needs only numpy + pymicro-features + ai-edge-litert. Training needs tensorflow. Data generation needs torch (for VITS TTS only).
 
 ## Documentation
 
