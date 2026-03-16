@@ -100,6 +100,9 @@ class WakeWordTrainer:
         self._metrics_path = config.model_output_dir / f"{config.model_name}_metrics.json"
         self._train_start: float = 0.0
 
+        # Compile the training step for GPU acceleration
+        self._compiled_train_step = tf.function(self._train_step)
+
     def _build_dataset(self) -> tf.data.Dataset:
         model_dir = self.config.model_output_dir
         data_files: dict[str, str | Path] = {
@@ -212,6 +215,34 @@ class WakeWordTrainer:
             }
         )
 
+    def _train_step(
+        self,
+        features: tf.Tensor,
+        labels: tf.Tensor,
+        optimizer: tf.keras.optimizers.Optimizer,
+        neg_weight: tf.Tensor,
+        lam: tf.Tensor,
+        label_smoothing: tf.Tensor,
+    ) -> tf.Tensor:
+        """Single compiled training step (runs on GPU via tf.function)."""
+        # Mixup
+        perm = tf.random.shuffle(tf.range(tf.shape(features)[0]))
+        features = lam * features + (1 - lam) * tf.gather(features, perm)
+        labels = lam * labels + (1 - lam) * tf.gather(labels, perm)
+
+        # Label smoothing
+        labels = labels * (1 - label_smoothing) + 0.5 * label_smoothing
+
+        with tf.GradientTape() as tape:
+            predictions = tf.squeeze(self.model(features, training=True), axis=-1)
+            loss_per_sample = focal_loss(predictions, labels, gamma=2.0)
+            weights = tf.where(labels < 0.5, neg_weight, 1.0)
+            loss = tf.reduce_mean(loss_per_sample * weights)
+
+        gradients = tape.gradient(loss, self.model.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+        return loss
+
     def _train_phase(
         self,
         phase: int,
@@ -229,7 +260,8 @@ class WakeWordTrainer:
             learning_rate=base_lr,
             weight_decay=self.config.weight_decay,
         )
-        label_smoothing = self.config.label_smoothing
+        label_smoothing_val = self.config.label_smoothing
+        label_smoothing_t = tf.constant(label_smoothing_val, dtype=tf.float32)
 
         warmup_steps = steps // 5 if phase == 1 else 0
         hold_steps = steps // 3 if phase == 1 else 0
@@ -238,8 +270,10 @@ class WakeWordTrainer:
 
         data_iter = iter(dataset)
         validation_interval = max(1, steps // 20)
+        log_interval = max(1, steps // 100)
 
         pbar = tqdm(range(steps), desc=f"Phase {phase}", unit="step")
+        last_loss = 0.0
         for step in pbar:
             # Get batch
             try:
@@ -248,44 +282,24 @@ class WakeWordTrainer:
                 data_iter = iter(dataset)
                 features, labels = next(data_iter)
 
-            # Embedding mixup: interpolate random pairs of samples and their
-            # labels to create virtual training examples.
-            mixup_alpha = 0.2
-            if mixup_alpha > 0:
-                lam = np.random.beta(mixup_alpha, mixup_alpha)
-                lam = tf.constant(lam, dtype=tf.float32)
-                perm = tf.random.shuffle(tf.range(tf.shape(features)[0]))
-                features = lam * features + (1 - lam) * tf.gather(features, perm)
-                labels = lam * labels + (1 - lam) * tf.gather(labels, perm)
-
-            # Label smoothing
-            if label_smoothing > 0:
-                labels = labels * (1 - label_smoothing) + 0.5 * label_smoothing
-
-            # Training step with GradientTape
-            with tf.GradientTape() as tape:
-                predictions = tf.squeeze(self.model(features, training=True), axis=-1)
-
-                # Focal loss
-                loss_per_sample = focal_loss(predictions, labels, gamma=2.0)
-
-                # Negative weighting
-                neg_weight = _negative_weight_schedule(step, steps, max_negative_weight)
-                weights = tf.where(labels < 0.5, neg_weight, 1.0)
-
-                loss = tf.reduce_mean(loss_per_sample * weights)
-
-            # LR schedule
+            # Schedule values
+            neg_weight = _negative_weight_schedule(step, steps, max_negative_weight)
             lr = _cosine_warmup_schedule(step, steps, warmup_steps, hold_steps, base_lr)
             optimizer.learning_rate.assign(lr)
 
-            # Backward
-            gradients = tape.gradient(loss, self.model.trainable_variables)
-            optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+            lam = tf.constant(np.random.beta(0.2, 0.2), dtype=tf.float32)
+            neg_weight_t = tf.constant(neg_weight, dtype=tf.float32)
 
-            # Update progress bar
+            # Compiled training step (runs on GPU)
+            loss = self._compiled_train_step(
+                features, labels, optimizer, neg_weight_t, lam, label_smoothing_t
+            )
+
+            # Only sync loss to CPU periodically (avoids GPU stall every step)
+            if step % log_interval == 0:
+                last_loss = float(loss.numpy())
             pbar.set_postfix(
-                loss=f"{loss.numpy():.4f}", lr=f"{lr:.1e}", neg_w=f"{neg_weight:.0f}"
+                loss=f"{last_loss:.4f}", lr=f"{lr:.1e}", neg_w=f"{neg_weight:.0f}"
             )
 
             # Validation in final quarter

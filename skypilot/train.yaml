@@ -21,6 +21,9 @@ setup: |
   sudo apt-get update && sudo apt-get install -y espeak-ng libsndfile1 ffmpeg sox portaudio19-dev
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.cargo/bin:$PATH"
+  # Expand ~ in env vars (SkyPilot doesn't expand tilde in envs)
+  DATA_DIR="${DATA_DIR/#\~/$HOME}"
+  OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
   # Persist data and output outside workdir so they survive re-syncs
   mkdir -p ${DATA_DIR} ${OUTPUT_DIR}
   ln -sfn ${DATA_DIR} data
@@ -30,8 +33,12 @@ setup: |
 
 run: |
   export PATH="$HOME/.cargo/bin:$PATH"
+  # Expand ~ in env vars (SkyPilot doesn't expand tilde in envs)
+  DATA_DIR="${DATA_DIR/#\~/$HOME}"
+  OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
   ln -sfn ${DATA_DIR} data
   ln -sfn ${OUTPUT_DIR} output
+  mkdir -p ${OUTPUT_DIR}/${MODEL_NAME}
   uv run livekit-wakeword run configs/${CONFIG_FILE}
   # Save artifacts into a workspace-scoped directory for separation
   ARTIFACT_DIR=/outputs/${WORKSPACE}/${MODEL_NAME}
@@ -47,5 +54,5 @@ envs:
   WORKSPACE: livekit-embedded-wakeword
   CONFIG_FILE: prod.yaml
   MODEL_NAME: hey_livekit
-  DATA_DIR: /home/ubuntu/persistent/data
-  OUTPUT_DIR: /home/ubuntu/persistent/output
+  DATA_DIR: ~/persistent/data
+  OUTPUT_DIR: ~/persistent/output

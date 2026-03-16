@@ -374,6 +374,10 @@ def train(
     """Train classifier on extracted features (3-phase adaptive training)."""
     config = load_config(config_path)
 
+    from .utils import configure_gpu
+
+    configure_gpu()
+
     logger.info(f"Training '{config.model_name}' model...")
     logger.info(f"Model: {config.model.model_type.value} ({config.model.model_size.value})")
     logger.info(f"Steps: {config.steps}")
@@ -441,6 +445,11 @@ def run(
     config = load_config(config_path)
 
     logger.info(f"Running full pipeline for '{config.model_name}'...")
+
+    # Configure GPU before any TF imports to ensure memory growth is set
+    from .utils import configure_gpu
+
+    configure_gpu()
 
     from .data.augment import run_augment
     from .data.features import run_extraction

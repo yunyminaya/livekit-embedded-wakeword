@@ -23,16 +23,25 @@ def get_device() -> torch.device:
 
 
 def configure_gpu() -> None:
-    """Configure TensorFlow GPU memory growth if available."""
+    """Configure TensorFlow GPU/MPS memory growth if available.
+
+    Must be called before any TensorFlow operations to take effect.
+    Works with CUDA (Linux/Windows) and Metal/MPS (macOS via tensorflow-metal).
+    """
     try:
         import tensorflow as tf
 
         gpus = tf.config.list_physical_devices("GPU")
         for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
+            try:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            except RuntimeError:
+                # Memory growth must be set before GPUs are initialized
+                pass
         if gpus:
-            logger.info(f"TensorFlow using {len(gpus)} GPU(s)")
+            names = [g.name for g in gpus]
+            logger.info(f"TensorFlow using {len(gpus)} GPU(s): {names}")
         else:
-            logger.info("TensorFlow using CPU")
+            logger.info("TensorFlow: no GPU found, using CPU")
     except Exception as e:
         logger.warning(f"GPU configuration failed: {e}")
