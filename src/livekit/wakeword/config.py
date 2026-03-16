@@ -112,10 +112,6 @@ class WakeWordConfig(BaseModel):
         }
     )
 
-    # Quantization-aware training
-    enable_qat: bool = False
-    qat_steps: int = 5000
-
     @model_validator(mode="after")
     def _warn_unknown_batch_keys(self) -> Self:
         known_keys = {"positive", "adversarial_negative", "negative_speech"}

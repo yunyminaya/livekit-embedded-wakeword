@@ -55,10 +55,6 @@ learning_rate: 0.001
 max_negative_weight: 1000
 target_fp_per_hour: 1.0
 
-# Enable quantization-aware training for INT8 export
-enable_qat: true
-qat_steps: 100
-
 batch_n_per_class:
   positive: 10
   adversarial_negative: 10

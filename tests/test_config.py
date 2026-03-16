@@ -80,12 +80,6 @@ def test_augmentation_config_defaults():
     assert config.augmentation.num_channels == 40
 
 
-def test_qat_config_defaults():
-    config = WakeWordConfig(model_name="test", target_phrases=["test"])
-    assert config.enable_qat is False
-    assert config.qat_steps == 5000
-
-
 def test_n_frames_property():
     config = WakeWordConfig(model_name="test", target_phrases=["test"])
     assert config.n_frames == 99  # 2.0s with 30ms/20ms

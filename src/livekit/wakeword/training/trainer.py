@@ -12,7 +12,7 @@ from typing import TypedDict
 import numpy as np
 import tensorflow as tf
 
-from ..config import ModelType, WakeWordConfig
+from ..config import WakeWordConfig
 from ..data.dataset import create_tf_dataset
 from ..models.pipeline import WakeWordClassifier
 from ..utils import configure_gpu
@@ -371,10 +371,6 @@ class WakeWordTrainer:
         # Select and average best checkpoints
         self._average_best_checkpoints()
 
-        # Optional QAT phase
-        if self.config.enable_qat:
-            self._qat_phase(dataset)
-
         # Log final averaged model metrics
         final_metrics = self._validate()
         self._log_metrics(total_steps, 0, {**final_metrics, "note": "final_averaged"})  # type: ignore[arg-type]
@@ -406,128 +402,6 @@ class WakeWordTrainer:
             validation_hours=validation_hours,
             target_fpph=self.config.target_fp_per_hour,
         )
-
-    def _qat_phase(self, dataset: tf.data.Dataset) -> None:
-        """Quantization-aware training phase: insert FakeQuant ops and fine-tune.
-
-        Uses tf_keras (legacy Keras 2) because tensorflow-model-optimization
-        does not support Keras 3. The fused RepCNN model is rebuilt with
-        tf_keras layers, quantized, fine-tuned, then saved for TFLite export.
-        """
-        try:
-            import tensorflow_model_optimization as tfmot
-            import tf_keras
-        except ImportError:
-            logger.warning(
-                "tensorflow-model-optimization or tf-keras not installed, skipping QAT. "
-                "Install with: pip install tensorflow-model-optimization tf-keras"
-            )
-            return
-
-        logger.info(f"=== QAT Phase: {self.config.qat_steps} steps ===")
-
-        n_frames = self.config.n_frames
-        n_channels = self.config.augmentation.num_channels
-
-        # Build a tf_keras functional model with fused weights (tfmot requires tf_keras)
-        if self.config.model.model_type == ModelType.repcnn:
-            from ..models.classifier import _fuse_conv_bn
-
-            rep_model = self.model.classifier
-
-            inp = tf_keras.Input(shape=(n_frames, n_channels))
-            x = tf_keras.layers.Reshape((n_frames, n_channels, 1))(inp)
-
-            # Fused init conv + BN
-            k_init, b_init = _fuse_conv_bn(rep_model.init_conv, rep_model.init_bn)
-            init_conv = tf_keras.layers.Conv2D(
-                int(k_init.shape[-1]), (3, 3), padding="same", name="fused_init"
-            )
-            x = init_conv(x)
-            init_conv.set_weights([k_init, b_init])
-            x = tf_keras.layers.ReLU()(x)
-
-            # Fused RepDS blocks
-            for i, block in enumerate(rep_model.rep_blocks):
-                dw_k, dw_b, pw_k, pw_b = block.fuse()
-                residual = x
-
-                dw = tf_keras.layers.DepthwiseConv2D(
-                    (3, 3),
-                    dilation_rate=(block._dilation, 1),
-                    padding="same",
-                    depth_multiplier=1,
-                    name=f"fused_dw_{i}",
-                )
-                x = dw(x)
-                dw.set_weights([dw_k, dw_b])
-                x = tf_keras.layers.ReLU()(x)
-
-                pw = tf_keras.layers.Conv2D(
-                    int(pw_k.shape[-1]), (1, 1), padding="same", name=f"fused_pw_{i}"
-                )
-                x = pw(x)
-                pw.set_weights([pw_k, pw_b])
-                x = tf_keras.layers.ReLU()(x)
-
-                if block._has_residual:
-                    x = tf_keras.layers.Add()([x, residual])
-
-            x = tf_keras.layers.GlobalAveragePooling2D()(x)
-            dense = tf_keras.layers.Dense(1, activation="sigmoid", name="fused_dense")
-            x = dense(x)
-            dense.set_weights(rep_model.dense_out.get_weights())
-
-            base_model = tf_keras.Model(inputs=inp, outputs=x, name="fused_repcnn_qat")
-        else:
-            logger.warning("QAT is only supported for repcnn model type, skipping")
-            return
-
-        # Wrap with quantization-aware training
-        try:
-            qat_model = tfmot.quantization.keras.quantize_model(base_model)
-        except Exception as exc:
-            logger.warning("Failed to apply QAT, skipping: %s", exc)
-            return
-
-        qat_lr = self.config.learning_rate * 0.001
-        optimizer = tf_keras.optimizers.Adam(learning_rate=qat_lr)
-        qat_model.compile(optimizer=optimizer, loss="binary_crossentropy")
-
-        label_smoothing_t = tf.constant(self.config.label_smoothing, dtype=tf.float32)
-        neg_weight_t = tf.constant(self.config.max_negative_weight, dtype=tf.float32)
-
-        from tqdm import tqdm
-
-        data_iter = iter(dataset)
-        pbar = tqdm(range(self.config.qat_steps), desc="QAT", unit="step")
-        for step in pbar:
-            try:
-                features, labels = next(data_iter)
-            except StopIteration:
-                data_iter = iter(dataset)
-                features, labels = next(data_iter)
-
-            # Label smoothing
-            labels = labels * (1 - label_smoothing_t) + 0.5 * label_smoothing_t
-
-            with tf.GradientTape() as tape:
-                predictions = tf.squeeze(qat_model(features, training=True), axis=-1)
-                loss_per_sample = focal_loss(predictions, labels, gamma=2.0)
-                weights = tf.where(labels < 0.5, neg_weight_t, 1.0)
-                loss = tf.reduce_mean(loss_per_sample * weights)
-
-            gradients = tape.gradient(loss, qat_model.trainable_variables)
-            optimizer.apply_gradients(zip(gradients, qat_model.trainable_variables))
-
-            if step % max(1, self.config.qat_steps // 100) == 0:
-                pbar.set_postfix(loss=f"{float(loss.numpy()):.4f}")
-
-        # Save QAT model
-        qat_path = self.config.model_output_dir / f"{self.config.model_name}.qat.keras"
-        qat_path.parent.mkdir(parents=True, exist_ok=True)
-        qat_model.save(str(qat_path))
-        logger.info(f"Saved QAT model to {qat_path}")
 
     def _average_best_checkpoints(self) -> None:
         """Average weights of top checkpoints.

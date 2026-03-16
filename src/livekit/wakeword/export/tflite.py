@@ -111,55 +111,6 @@ def quantize_tflite(
     return output_path
 
 
-def export_qat_classifier(
-    config: WakeWordConfig,
-    output_path: Path,
-) -> Path:
-    """Export a QAT-trained model to fully INT8-quantized TFLite.
-
-    Loads the .qat.keras model, strips FakeQuant wrappers, and converts
-    with INT8 input type for optimal ESP32-S3 inference.
-    """
-    import tensorflow_model_optimization as tfmot
-    import tf_keras
-
-    model_dir = config.model_output_dir
-    qat_path = model_dir / f"{config.model_name}.qat.keras"
-    if not qat_path.exists():
-        raise FileNotFoundError(f"QAT model not found: {qat_path}")
-
-    # Disable mixed precision — QAT export needs float32 for proper INT8 calibration
-    original_policy = tf.keras.mixed_precision.global_policy()
-    tf.keras.mixed_precision.set_global_policy("float32")
-
-    try:
-        qat_model = tf_keras.models.load_model(str(qat_path))
-        stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
-
-        # Export via SavedModel to avoid Keras 2/3 tracing conflicts
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stripped_model.save(tmpdir)
-            converter = tf.lite.TFLiteConverter.from_saved_model(tmpdir)
-
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.float32
-
-        tflite_model = converter.convert()
-    finally:
-        tf.keras.mixed_precision.set_global_policy(original_policy)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(tflite_model)
-    logger.info(
-        f"Exported QAT INT8 TFLite model to {output_path} ({len(tflite_model) / 1024:.1f} KB)"
-    )
-    return output_path
-
-
 def run_export(config: WakeWordConfig, quantize: bool = False) -> Path:
     """Export trained model to TFLite."""
     model_dir = config.model_output_dir
@@ -172,13 +123,7 @@ def run_export(config: WakeWordConfig, quantize: bool = False) -> Path:
     tflite_path = model_dir / f"{config.model_name}.tflite"
     export_classifier(config, weights_path, tflite_path)
 
-    # If QAT model exists, export it as INT8
-    qat_path = model_dir / f"{config.model_name}.qat.keras"
-    if qat_path.exists():
-        qat_tflite_path = model_dir / f"{config.model_name}_qat_int8.tflite"
-        export_qat_classifier(config, qat_tflite_path)
-
-    # Optionally quantize (dynamic range)
+    # Optionally quantize
     if quantize:
         quantize_tflite(config, weights_path)
 
