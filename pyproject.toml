@@ -53,6 +53,7 @@ train = [
     "tqdm>=4.60",
     "mmap-ninja>=0.7",
     "tensorflow-model-optimization>=0.8",
+    "tf-keras>=2.16",
 ]
 datagen = [
     "torch>=2.2",
