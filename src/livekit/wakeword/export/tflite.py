@@ -128,17 +128,29 @@ def export_qat_classifier(
     if not qat_path.exists():
         raise FileNotFoundError(f"QAT model not found: {qat_path}")
 
-    qat_model = tf_keras.models.load_model(str(qat_path))
-    stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
+    # Disable mixed precision — QAT export needs float32 for proper INT8 calibration
+    original_policy = tf.keras.mixed_precision.global_policy()
+    tf.keras.mixed_precision.set_global_policy("float32")
 
-    # Use tf_keras-native converter (from_keras_model) to avoid Keras 2/3 op mismatch
-    converter = tf.lite.TFLiteConverter.from_keras_model(stripped_model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-    converter.inference_input_type = tf.int8
-    converter.inference_output_type = tf.float32
+    try:
+        qat_model = tf_keras.models.load_model(str(qat_path))
+        stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
 
-    tflite_model = converter.convert()
+        # Export via SavedModel to avoid Keras 2/3 tracing conflicts
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stripped_model.save(tmpdir)
+            converter = tf.lite.TFLiteConverter.from_saved_model(tmpdir)
+
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+        converter.inference_input_type = tf.int8
+        converter.inference_output_type = tf.float32
+
+        tflite_model = converter.convert()
+    finally:
+        tf.keras.mixed_precision.set_global_policy(original_policy)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(tflite_model)
