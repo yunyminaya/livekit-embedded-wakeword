@@ -25,64 +25,65 @@ def mmap_batch_generator(
         (features, labels) where features is (batch_size, n_frames, num_channels)
         and labels is (batch_size,) with 0/1 values.
     """
-    # Memory-map all files
-    mmaps: dict[str, np.ndarray] = {}
+    # Load all files into RAM (mmap causes page faults on random access)
+    arrays: dict[str, np.ndarray] = {}
     for name, path in data_files.items():
         path = Path(path)
         if not path.exists():
             logger.warning(f"Data file not found: {path}, skipping class '{name}'")
             continue
-        data = np.load(str(path), mmap_mode="r")
+        data = np.load(str(path))
         # Validate: expect 3D (N, n_frames, num_channels)
         if data.ndim != 3:
             raise ValueError(
                 f"Expected 3D features for '{name}', got shape {data.shape}. "
                 f"The file {path} may need to be re-extracted."
             )
-        mmaps[name] = data
-        logger.info(f"Loaded {name}: shape={mmaps[name].shape} from {path}")
+        arrays[name] = data
+        logger.info(f"Loaded {name}: shape={data.shape} from {path}")
 
-    if not mmaps:
+    if not arrays:
         raise FileNotFoundError("No data files found for training")
 
     # Warn about requested classes that have no loaded data
     for name, n in n_per_class.items():
-        if n > 0 and name not in mmaps:
+        if n > 0 and name not in arrays:
             logger.warning(
                 f"Class '{name}' requested {n} samples per batch but no data file was loaded"
             )
 
+    # Pre-compute label arrays for each class
+    class_labels: dict[str, float] = {}
+    for name in arrays:
+        class_labels[name] = float(label_funcs[name](None))
+
     # Track position in each file
-    positions: dict[str, int] = {name: 0 for name in mmaps}
+    positions: dict[str, int] = {name: 0 for name in arrays}
 
     while True:
-        batch_features: list[np.ndarray] = []
-        batch_labels: list[int] = []
+        batch_parts: list[np.ndarray] = []
+        label_parts: list[np.ndarray] = []
 
-        for name, data in mmaps.items():
+        for name, data in arrays.items():
             n = n_per_class.get(name, 0)
             if n == 0:
                 continue
 
-            label_fn = label_funcs[name]
             total = data.shape[0]
             pos = positions[name]
 
             # Collect n samples, wrapping around if needed
             indices = np.arange(pos, pos + n) % total
-            samples = data[indices]
-
-            for sample in samples:
-                batch_features.append(sample)
-                batch_labels.append(label_fn(sample))
+            batch_parts.append(data[indices])
+            label_parts.append(np.full(n, class_labels[name], dtype=np.float32))
 
             positions[name] = (pos + n) % total
 
-        if not batch_features:
+        if not batch_parts:
             break
 
-        features = np.stack(batch_features, axis=0)
-        labels = np.array(batch_labels, dtype=np.float32)
+        features = np.concatenate(batch_parts, axis=0)
+        labels = np.concatenate(label_parts, axis=0)
 
         # Shuffle within batch
         perm = np.random.permutation(len(labels))
