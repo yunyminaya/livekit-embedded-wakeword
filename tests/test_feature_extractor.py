@@ -1,51 +1,72 @@
-"""Tests for MelSpectrogramFrontend and SpeechEmbedding."""
+"""Tests for MicroFrontend spectrogram extractor."""
 
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from livekit.wakeword.models.feature_extractor import MelSpectrogramFrontend
-from livekit.wakeword.resources import get_mel_model_path
+from livekit.wakeword.models.feature_extractor import MicroFrontend, compute_n_frames
 
 
-class TestMelSpectrogramFrontend:
-    """Test the ONNX mel spectrogram frontend."""
+class TestMicroFrontend:
+    """Test the pure-numpy micro_speech spectrogram frontend."""
 
     def test_output_shape(self):
-        frontend = MelSpectrogramFrontend(onnx_path=get_mel_model_path())
+        frontend = MicroFrontend()
         audio = np.random.randn(2, 32000).astype(np.float32)
-        mel = frontend(audio)
-        batch, time_frames, n_mels = mel.shape
+        spec = frontend(audio)
+        batch, n_frames, n_channels = spec.shape
         assert batch == 2
-        assert n_mels == 32
-        assert time_frames > 0
+        assert n_channels == 40
+        assert n_frames == 99
 
     def test_single_sample(self):
-        frontend = MelSpectrogramFrontend(onnx_path=get_mel_model_path())
+        frontend = MicroFrontend()
         audio = np.random.randn(1, 16000).astype(np.float32)  # 1 second
-        mel = frontend(audio)
-        assert mel.shape[0] == 1
-        assert mel.shape[2] == 32
-        assert mel.shape[1] > 90
+        spec = frontend(audio)
+        assert spec.shape[0] == 1
+        assert spec.shape[2] == 40
+        assert spec.shape[1] > 0
 
     def test_1d_input(self):
         """1D input should be auto-batched."""
-        frontend = MelSpectrogramFrontend(onnx_path=get_mel_model_path())
+        frontend = MicroFrontend()
         audio = np.random.randn(16000).astype(np.float32)
-        mel = frontend(audio)
-        assert mel.ndim == 3
-        assert mel.shape[0] == 1
-        assert mel.shape[2] == 32
+        spec = frontend(audio)
+        assert spec.ndim == 3
+        assert spec.shape[0] == 1
+        assert spec.shape[2] == 40
 
     def test_deterministic(self):
-        frontend = MelSpectrogramFrontend(onnx_path=get_mel_model_path())
+        frontend = MicroFrontend()
         audio = np.random.randn(1, 16000).astype(np.float32)
-        mel1 = frontend(audio)
-        mel2 = frontend(audio)
-        np.testing.assert_allclose(mel1, mel2)
+        spec1 = frontend(audio)
+        spec2 = frontend(audio)
+        np.testing.assert_allclose(spec1, spec2)
 
-    def test_nonexistent_onnx_raises(self, tmp_path):
-        """Non-existent ONNX path should raise FileNotFoundError."""
-        with pytest.raises(FileNotFoundError):
-            MelSpectrogramFrontend(onnx_path=tmp_path / "nonexistent.onnx")
+    def test_custom_parameters(self):
+        """Custom window/hop parameters should work."""
+        frontend = MicroFrontend(window_size_ms=25, window_step_ms=10, num_channels=32)
+        audio = np.random.randn(16000).astype(np.float32)
+        spec = frontend(audio)
+        assert spec.shape[2] == 32
+
+    def test_short_audio(self):
+        """Very short audio should produce 0 frames."""
+        frontend = MicroFrontend()
+        audio = np.random.randn(100).astype(np.float32)  # < 30ms
+        spec = frontend(audio)
+        assert spec.shape[1] == 0
+
+
+class TestComputeNFrames:
+    def test_2s_audio(self):
+        """2.0s at 16kHz with 30ms/20ms should produce 99 frames."""
+        assert compute_n_frames(32000) == 99
+
+    def test_1s_audio(self):
+        n = compute_n_frames(16000)
+        assert n > 0
+        assert n < 99
+
+    def test_zero_samples(self):
+        assert compute_n_frames(0) == 0

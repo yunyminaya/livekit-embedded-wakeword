@@ -62,7 +62,7 @@ class TestDataset:
             label_funcs={"pos": lambda _: 1, "neg": lambda _: 0},
         )
         features, labels = next(gen)
-        assert features.shape == (30, 16, 96)
+        assert features.shape == (30, 99, 40)
         assert labels.shape == (30,)
         assert np.sum(labels == 1) == 10
         assert np.sum(labels == 0) == 20

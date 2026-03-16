@@ -10,7 +10,7 @@ import pytest
 from livekit.wakeword.eval.evaluate import (
     _compute_aut,
     _compute_det_curve,
-    _predict_onnx,
+    _predict_tflite,
 )
 
 
@@ -77,25 +77,37 @@ class TestAUT:
         assert 0.0 <= aut <= 1.0
 
 
-class TestOnnxPredict:
-    """Tests for ONNX prediction helper."""
+class TestTflitePredict:
+    """Tests for TFLite prediction helper."""
 
-    def test_predict_with_mock_session(self) -> None:
-        """Ensure _predict_onnx batches and concatenates correctly."""
+    def test_predict_with_mock_interpreter(self) -> None:
+        """Ensure _predict_tflite processes and concatenates correctly."""
 
-        class _MockInput:
-            name = "embeddings"
+        class _MockInterpreter:
+            def __init__(self):
+                self._input = None
 
-        class _MockSession:
-            def get_inputs(self):
-                return [_MockInput()]
+            def get_input_details(self):
+                return [{"index": 0, "shape": [1, 99, 40]}]
 
-            def run(self, _output_names, inputs):
-                batch = inputs["embeddings"]
-                # Mimic real ONNX output shape: (batch, 1)
-                scores = batch.mean(axis=(1, 2))[:, np.newaxis]
-                return [scores]
+            def get_output_details(self):
+                return [{"index": 1}]
 
-        features = np.random.randn(50, 16, 96).astype(np.float32)
-        scores = _predict_onnx(_MockSession(), features, batch_size=16)  # type: ignore[arg-type]
+            def set_tensor(self, index, data):
+                self._input = data
+
+            def invoke(self):
+                pass
+
+            def get_tensor(self, index):
+                # Return mean of input as score
+                batch = self._input
+                score = batch.mean(axis=(1, 2))[:, np.newaxis]
+                return score
+
+            def allocate_tensors(self):
+                pass
+
+        features = np.random.randn(50, 99, 40).astype(np.float32)
+        scores = _predict_tflite(_MockInterpreter(), features, batch_size=16)
         assert scores.shape == (50,)

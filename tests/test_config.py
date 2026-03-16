@@ -22,21 +22,21 @@ def test_default_config():
     config = WakeWordConfig(model_name="test", target_phrases=["hey test"])
     assert config.model_name == "test"
     assert config.steps == 50000
-    assert config.model.model_type == ModelType.conv_attention
+    assert config.model.model_type == ModelType.inception
     assert config.model.model_size == ModelSize.small
 
 
 def test_model_size_presets():
-    assert MODEL_SIZE_PRESETS[ModelSize.tiny] == (16, 1)
-    assert MODEL_SIZE_PRESETS[ModelSize.small] == (32, 1)
-    assert MODEL_SIZE_PRESETS[ModelSize.medium] == (128, 2)
-    assert MODEL_SIZE_PRESETS[ModelSize.large] == (256, 3)
+    assert MODEL_SIZE_PRESETS[ModelSize.tiny] == (8, 2)
+    assert MODEL_SIZE_PRESETS[ModelSize.small] == (16, 3)
+    assert MODEL_SIZE_PRESETS[ModelSize.medium] == (24, 5)
+    assert MODEL_SIZE_PRESETS[ModelSize.large] == (32, 7)
 
 
 def test_model_config_properties():
-    cfg = ModelConfig(model_type=ModelType.dnn, model_size=ModelSize.medium)
-    assert cfg.layer_dim == 128
-    assert cfg.n_blocks == 2
+    cfg = ModelConfig(model_type=ModelType.inception, model_size=ModelSize.medium)
+    assert cfg.filters == 24
+    assert cfg.n_blocks == 5
 
 
 def test_config_output_dir():
@@ -53,7 +53,7 @@ def test_load_config_from_yaml(tmp_path: Path):
         "model_name": "test_word",
         "target_phrases": ["test word"],
         "steps": 1000,
-        "model": {"model_type": "rnn", "model_size": "large"},
+        "model": {"model_type": "mixednet", "model_size": "large"},
     }
     yaml_path = tmp_path / "test.yaml"
     with open(yaml_path, "w") as f:
@@ -62,7 +62,7 @@ def test_load_config_from_yaml(tmp_path: Path):
     config = load_config(yaml_path)
     assert config.model_name == "test_word"
     assert config.steps == 1000
-    assert config.model.model_type == ModelType.rnn
+    assert config.model.model_type == ModelType.mixednet
     assert config.model.model_size == ModelSize.large
 
 
@@ -70,4 +70,16 @@ def test_batch_n_per_class_default():
     config = WakeWordConfig(model_name="test", target_phrases=["test"])
     assert config.batch_n_per_class["positive"] == 50
     assert config.batch_n_per_class["adversarial_negative"] == 50
-    assert config.batch_n_per_class["ACAV100M_sample"] == 1024
+    assert config.batch_n_per_class["negative_speech"] == 1024
+
+
+def test_augmentation_config_defaults():
+    config = WakeWordConfig(model_name="test", target_phrases=["test"])
+    assert config.augmentation.window_size_ms == 30
+    assert config.augmentation.window_step_ms == 20
+    assert config.augmentation.num_channels == 40
+
+
+def test_n_frames_property():
+    config = WakeWordConfig(model_name="test", target_phrases=["test"])
+    assert config.n_frames == 99  # 2.0s with 30ms/20ms

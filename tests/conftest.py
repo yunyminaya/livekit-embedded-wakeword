@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
 
 from livekit.wakeword.config import WakeWordConfig
 
@@ -25,21 +24,21 @@ def sample_config(tmp_path: Path) -> WakeWordConfig:
 
 
 @pytest.fixture
-def sample_audio() -> torch.Tensor:
+def sample_audio() -> np.ndarray:
     """Random 2-second 16kHz audio batch."""
-    return torch.randn(2, 32000)
+    return np.random.randn(2, 32000).astype(np.float32)
 
 
 @pytest.fixture
-def sample_embeddings() -> torch.Tensor:
-    """Random (batch, 16, 96) embedding sequence."""
-    return torch.randn(4, 16, 96)
+def sample_spectrogram() -> np.ndarray:
+    """Random (batch, 99, 40) spectrogram features."""
+    return np.random.randn(4, 99, 40).astype(np.float32)
 
 
 @pytest.fixture
 def sample_features_file(tmp_path: Path) -> Path:
     """Create a temporary .npy features file."""
-    features = np.random.randn(100, 16, 96).astype(np.float32)
+    features = np.random.randn(100, 99, 40).astype(np.float32)
     path = tmp_path / "test_features.npy"
     np.save(str(path), features)
     return path

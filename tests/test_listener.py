@@ -119,7 +119,7 @@ async def test_error_propagation():
 
     class ErrorModel:
         def predict(self, audio_chunk: np.ndarray) -> dict[str, float]:
-            raise ValueError("ONNX inference failed")
+            raise ValueError("TFLite inference failed")
 
     model = ErrorModel()
     stream = FakeStream()

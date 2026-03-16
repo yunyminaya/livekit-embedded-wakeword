@@ -1,61 +1,61 @@
-"""Tests for DNN and RNN classifiers."""
+"""Tests for Inception and MixedNet classifiers."""
 
 from __future__ import annotations
 
-import torch
+import numpy as np
+import tensorflow as tf
 
 from livekit.wakeword.config import ModelSize, ModelType
 from livekit.wakeword.models.classifier import (
-    DNNClassifier,
-    RNNClassifier,
+    InceptionClassifier,
+    MixedNetClassifier,
     build_classifier,
 )
 
 
-class TestDNNClassifier:
-    def test_output_shape(self, sample_embeddings: torch.Tensor):
-        model = DNNClassifier(layer_dim=32, n_blocks=1)
-        out = model(sample_embeddings)
+class TestInceptionClassifier:
+    def test_output_shape(self, sample_spectrogram: np.ndarray):
+        model = InceptionClassifier(n_frames=99, n_features=40, filters=8, n_inception_blocks=2)
+        out = model(sample_spectrogram, training=False)
         assert out.shape == (4, 1)
 
-    def test_output_range(self, sample_embeddings: torch.Tensor):
-        model = DNNClassifier(layer_dim=32, n_blocks=1)
-        out = model(sample_embeddings)
-        assert (out >= 0).all() and (out <= 1).all()
+    def test_output_range(self, sample_spectrogram: np.ndarray):
+        model = InceptionClassifier(n_frames=99, n_features=40, filters=8, n_inception_blocks=2)
+        out = model(sample_spectrogram, training=False).numpy()
+        assert np.all(out >= 0) and np.all(out <= 1)
 
-    def test_sizes(self, sample_embeddings: torch.Tensor):
-        for layer_dim, n_blocks in [(16, 1), (32, 1), (128, 2), (256, 3)]:
-            model = DNNClassifier(layer_dim=layer_dim, n_blocks=n_blocks)
-            out = model(sample_embeddings)
-            assert out.shape == (4, 1)
-
-
-class TestRNNClassifier:
-    def test_output_shape(self, sample_embeddings: torch.Tensor):
-        model = RNNClassifier()
-        out = model(sample_embeddings)
+    def test_training_mode(self, sample_spectrogram: np.ndarray):
+        model = InceptionClassifier(n_frames=99, n_features=40, filters=8, n_inception_blocks=2)
+        out = model(sample_spectrogram, training=True)
         assert out.shape == (4, 1)
 
-    def test_output_range(self, sample_embeddings: torch.Tensor):
-        model = RNNClassifier()
-        out = model(sample_embeddings)
-        assert (out >= 0).all() and (out <= 1).all()
+
+class TestMixedNetClassifier:
+    def test_output_shape(self, sample_spectrogram: np.ndarray):
+        model = MixedNetClassifier(n_frames=99, n_features=40, filters=16, n_blocks=2)
+        out = model(sample_spectrogram, training=False)
+        assert out.shape == (4, 1)
+
+    def test_output_range(self, sample_spectrogram: np.ndarray):
+        model = MixedNetClassifier(n_frames=99, n_features=40, filters=16, n_blocks=2)
+        out = model(sample_spectrogram, training=False).numpy()
+        assert np.all(out >= 0) and np.all(out <= 1)
 
 
 class TestBuildClassifier:
-    def test_build_dnn(self, sample_embeddings: torch.Tensor):
-        model = build_classifier(ModelType.dnn, ModelSize.small)
-        out = model(sample_embeddings)
+    def test_build_inception(self, sample_spectrogram: np.ndarray):
+        model = build_classifier(ModelType.inception, ModelSize.small)
+        out = model(sample_spectrogram, training=False)
         assert out.shape == (4, 1)
 
-    def test_build_rnn(self, sample_embeddings: torch.Tensor):
-        model = build_classifier(ModelType.rnn, ModelSize.medium)
-        out = model(sample_embeddings)
+    def test_build_mixednet(self, sample_spectrogram: np.ndarray):
+        model = build_classifier(ModelType.mixednet, ModelSize.small)
+        out = model(sample_spectrogram, training=False)
         assert out.shape == (4, 1)
 
-    def test_all_sizes(self, sample_embeddings: torch.Tensor):
+    def test_all_sizes(self, sample_spectrogram: np.ndarray):
         for size in ModelSize:
             for mtype in ModelType:
                 model = build_classifier(mtype, size)
-                out = model(sample_embeddings)
+                out = model(sample_spectrogram, training=False)
                 assert out.shape == (4, 1)
