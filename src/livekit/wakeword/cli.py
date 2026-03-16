@@ -12,7 +12,7 @@ from .config import load_config
 
 app = typer.Typer(
     name="livekit-wakeword",
-    help="Simplified pure-PyTorch wake word detection.",
+    help="Wake word detection with microWakeWord-based TFLite models.",
     no_args_is_help=True,
 )
 
@@ -27,11 +27,11 @@ logger = logging.getLogger("livekit.wakeword")
 @app.command()
 def setup(
     data_dir: str = typer.Option("./data", help="Root data directory"),
-    skip_acav: bool = typer.Option(
-        False, "--skip-acav", help="Skip downloading ACAV100M features (~16 GB)"
+    skip_negatives: bool = typer.Option(
+        False, "--skip-negatives", help="Skip downloading negative speech features"
     ),
 ) -> None:
-    """Download external dependencies: VITS TTS model, ACAV100M features, RIRs, backgrounds."""
+    """Download external dependencies: VITS TTS model, negative features, RIRs, backgrounds."""
     data_path = Path(data_dir)
     data_path.mkdir(parents=True, exist_ok=True)
 
@@ -42,14 +42,13 @@ def setup(
     piper_dir.mkdir(exist_ok=True)
     _download_piper(piper_dir)
 
-    # Download ACAV100M features
+    # Download negative speech features (microWakeWord precomputed spectrograms)
     features_dir = data_path / "features"
     features_dir.mkdir(exist_ok=True)
-    if skip_acav:
-        logger.info("Skipping ACAV100M features (--skip-acav). Downloading validation only...")
-        _download_validation_features(features_dir)
+    if skip_negatives:
+        logger.info("Skipping negative speech features (--skip-negatives).")
     else:
-        _download_features(features_dir)
+        _download_microwakeword_features(features_dir)
 
     # Download RIRs
     rir_dir = data_path / "rirs"
@@ -111,48 +110,144 @@ def _download_piper(piper_dir: Path) -> None:
         logger.info(f"VITS config already exists: {json_dest}")
 
 
-def _download_validation_features(features_dir: Path) -> None:
-    """Download only the validation features (~176 MB)."""
+def _download_microwakeword_features(features_dir: Path) -> None:
+    """Download microWakeWord precomputed spectrogram features from HuggingFace.
+
+    Downloads ZIP files from kahrendt/microwakeword, extracts them, and
+    converts the RaggedMmap (mmap-ninja) format to .npy files.
+    """
     try:
         from huggingface_hub import hf_hub_download
-
-        logger.info("Downloading validation features (~176 MB, ~11hrs)...")
-        hf_hub_download(
-            repo_id="binhpham/livekit_wakeword_features",
-            filename="validation_set_features.npy",
-            local_dir=str(features_dir),
-            repo_type="dataset",
-        )
-        logger.info("Validation features downloaded.")
     except ImportError:
         logger.warning(
             "huggingface-hub not installed. Install with: uv pip install huggingface-hub"
         )
-    except Exception as e:
-        logger.warning(f"Failed to download validation features: {e}")
+        return
+
+    import zipfile
+
+    repo_id = "kahrendt/microwakeword"
+    feature_zips = [
+        "speech.zip",
+        "no_speech.zip",
+        "speech_background.zip",
+        "no_speech_background.zip",
+        "dinner_party.zip",
+        "dinner_party_eval.zip",
+    ]
+
+    for zip_name in feature_zips:
+        npy_name = zip_name.replace(".zip", "_features.npy")
+        npy_path = features_dir / npy_name
+        if npy_path.exists():
+            logger.info(f"Features already exist: {npy_path}")
+            continue
+
+        logger.info(f"Downloading {zip_name} from {repo_id}...")
+        try:
+            zip_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=zip_name,
+                local_dir=str(features_dir),
+                repo_type="dataset",
+            )
+
+            # Extract ZIP
+            extract_dir = features_dir / zip_name.replace(".zip", "")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(str(extract_dir))
+
+            # Convert RaggedMmap to .npy
+            _convert_ragged_to_npy(extract_dir, npy_path)
+            logger.info(f"Converted {zip_name} → {npy_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to download/convert {zip_name}: {e}")
+
+    # Create combined feature files for training
+    _combine_negative_features(features_dir)
 
 
-def _download_features(features_dir: Path) -> None:
-    """Download pre-computed ACAV100M and validation features."""
+def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
+    """Convert mmap-ninja RaggedMmap directory to a fixed-size .npy file.
+
+    Each spectrogram is padded/truncated to 99 frames × 40 features.
+    """
+    import numpy as np
+
+    from ..models.feature_extractor import NUM_CHANNELS, compute_n_frames
+
+    n_frames = compute_n_frames(int(2.0 * 16000))  # 99 for 2.0s
+
     try:
-        from huggingface_hub import hf_hub_download
+        from mmap_ninja.ragged import RaggedMmap
 
-        logger.info("Downloading ACAV100M features (~16 GB, ~2000hrs)...")
-        hf_hub_download(
-            repo_id="binhpham/livekit_wakeword_features",
-            filename="openwakeword_features_ACAV100M_2000_hrs_16bit.npy",
-            local_dir=str(features_dir),
-            repo_type="dataset",
-        )
-        logger.info("ACAV100M features downloaded.")
+        mmap_data = RaggedMmap(str(ragged_dir))
+        n_samples = len(mmap_data)
+
+        if n_samples == 0:
+            np.save(str(output_path), np.zeros((0, n_frames, NUM_CHANNELS), dtype=np.float32))
+            return
+
+        all_specs: list[np.ndarray] = []
+        for i in range(n_samples):
+            spec = np.array(mmap_data[i], dtype=np.float32)
+            # Pad or truncate to canonical n_frames
+            if spec.shape[0] >= n_frames:
+                spec = spec[-n_frames:]
+            else:
+                pad = np.zeros((n_frames - spec.shape[0], spec.shape[1]), dtype=np.float32)
+                spec = np.concatenate([pad, spec], axis=0)
+            # Ensure correct feature count
+            if spec.shape[1] != NUM_CHANNELS:
+                logger.warning(
+                    f"Feature count mismatch: expected {NUM_CHANNELS}, got {spec.shape[1]}"
+                )
+                continue
+            all_specs.append(spec)
+
+        features = np.stack(all_specs, axis=0)
+        np.save(str(output_path), features)
+        logger.info(f"Saved {features.shape} features to {output_path}")
+
     except ImportError:
         logger.warning(
-            "huggingface-hub not installed. Install with: uv pip install huggingface-hub"
+            "mmap-ninja not installed. Install with: uv pip install mmap-ninja\n"
+            "Cannot convert RaggedMmap features to .npy format."
         )
-    except Exception as e:
-        logger.warning(f"Failed to download ACAV100M features: {e}")
 
-    _download_validation_features(features_dir)
+
+def _combine_negative_features(features_dir: Path) -> None:
+    """Combine individual negative feature files into training/validation sets."""
+    import numpy as np
+
+    # Training negatives: speech + no_speech + speech_background + no_speech_background
+    train_files = [
+        "speech_features.npy",
+        "no_speech_features.npy",
+        "speech_background_features.npy",
+        "no_speech_background_features.npy",
+    ]
+    train_arrays = []
+    for fname in train_files:
+        fpath = features_dir / fname
+        if fpath.exists():
+            train_arrays.append(np.load(str(fpath)))
+
+    if train_arrays:
+        combined = np.concatenate(train_arrays, axis=0)
+        out_path = features_dir / "speech_features.npy"
+        np.save(str(out_path), combined)
+        logger.info(f"Combined negative training features: {combined.shape}")
+
+    # Validation negatives: dinner_party_eval
+    eval_path = features_dir / "dinner_party_eval_features.npy"
+    if eval_path.exists():
+        val_path = features_dir / "validation_features.npy"
+        import shutil
+
+        shutil.copy2(str(eval_path), str(val_path))
+        logger.info(f"Validation features: {val_path}")
 
 
 def _download_musan_noise(bg_dir: Path) -> None:
@@ -224,7 +319,7 @@ def generate(
 def augment(
     config_path: str = typer.Argument(..., help="Path to wake word config YAML"),
 ) -> None:
-    """Augment clips and extract features through frozen pipeline."""
+    """Augment clips and extract spectrogram features."""
     config = load_config(config_path)
 
     logger.info(f"Augmenting data for '{config.model_name}'...")
@@ -235,7 +330,7 @@ def augment(
     run_augment(config)
     logger.info("Augmentation complete!")
 
-    logger.info("Extracting features through frozen embedding pipeline...")
+    logger.info("Extracting spectrogram features...")
     run_extraction(config)
     logger.info("Feature extraction complete!")
 
@@ -262,22 +357,25 @@ def export(
     config_path: str = typer.Argument(..., help="Path to wake word config YAML"),
     quantize: bool = typer.Option(False, "--quantize", help="Apply INT8 quantization"),
 ) -> None:
-    """Export trained model to ONNX (optionally quantize for embedded)."""
+    """Export trained model to TFLite (optionally quantize for embedded)."""
     config = load_config(config_path)
 
-    logger.info(f"Exporting '{config.model_name}' to ONNX...")
+    logger.info(f"Exporting '{config.model_name}' to TFLite...")
 
-    from .export.onnx import run_export
+    from .export.tflite import run_export
 
-    onnx_path = run_export(config, quantize=quantize)
-    logger.info(f"Export complete! ONNX model at {onnx_path}")
+    tflite_path = run_export(config, quantize=quantize)
+    logger.info(f"Export complete! TFLite model at {tflite_path}")
 
 
 @app.command()
 def eval(
     config_path: str = typer.Argument(..., help="Path to wake word config YAML"),
     model_path: str = typer.Option(
-        None, "--model", "-m", help="Path to ONNX model (default: <output_dir>/<model_name>.onnx)"
+        None,
+        "--model",
+        "-m",
+        help="Path to TFLite model (default: <output_dir>/<model_name>.tflite)",
     ),
 ) -> None:
     """Evaluate model on validation set: DET curve, AUT, FPPH, recall."""
@@ -286,7 +384,7 @@ def eval(
     config = load_config(config_path)
 
     if model_path is None:
-        resolved_model = config.model_output_dir / f"{config.model_name}.onnx"
+        resolved_model = config.model_output_dir / f"{config.model_name}.tflite"
     else:
         resolved_model = Path(model_path)
 
@@ -316,7 +414,7 @@ def run(
     from .data.features import run_extraction
     from .data.generate import run_generate
     from .eval.evaluate import run_eval
-    from .export.onnx import run_export
+    from .export.tflite import run_export
     from .training.trainer import run_train
 
     logger.info("Step 1/6: Generate synthetic data")
@@ -325,17 +423,17 @@ def run(
     logger.info("Step 2/6: Augment clips")
     run_augment(config)
 
-    logger.info("Step 3/6: Extract features")
+    logger.info("Step 3/6: Extract spectrogram features")
     run_extraction(config)
 
     logger.info("Step 4/6: Train classifier")
     run_train(config)
 
-    logger.info("Step 5/6: Export to ONNX")
-    onnx_path = run_export(config)
+    logger.info("Step 5/6: Export to TFLite")
+    tflite_path = run_export(config)
 
     logger.info("Step 6/6: Evaluate model")
-    results = run_eval(config, onnx_path)
+    results = run_eval(config, tflite_path)
     logger.info(
         f"Eval: AUT={results['aut']:.4f}  FPPH={results['fpph']:.2f}  "
         f"Recall={results['recall']:.1%}"

@@ -7,9 +7,9 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
 
 from ..config import WakeWordConfig
+from ..inference.model import _load_tflite_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -18,30 +18,32 @@ def _load_validation_features(config: WakeWordConfig) -> tuple[np.ndarray, np.nd
     """Load positive and negative validation features from pre-extracted .npy files.
 
     Returns:
-        (positive_features, negative_features) each shaped (N, 16, 96).
+        (positive_features, negative_features) each shaped (N, n_frames, num_channels).
     """
     model_dir = config.model_output_dir
+    n_frames = config.n_frames
+    n_channels = config.augmentation.num_channels
+    empty = np.zeros((0, n_frames, n_channels))
+
     pos_path = model_dir / "positive_features_test.npy"
     neg_path = model_dir / "negative_features_test.npy"
 
-    pos = np.load(str(pos_path)) if pos_path.exists() else np.zeros((0, 16, 96))
-    neg = np.load(str(neg_path)) if neg_path.exists() else np.zeros((0, 16, 96))
+    pos = np.load(str(pos_path)) if pos_path.exists() else empty
+    neg = np.load(str(neg_path)) if neg_path.exists() else empty
 
     # Also include general negative validation features if available
-    val_path = config.data_path / "features" / "validation_set_features.npy"
+    val_path = config.data_path / "features" / "validation_features.npy"
     if val_path.exists():
         val_neg = np.load(str(val_path))
-        if val_neg.ndim == 2:
-            n_full = (val_neg.shape[0] // 16) * 16
-            remainder = val_neg.shape[0] - n_full
-            if remainder > 0:
-                logger.warning(
-                    "Dropping %d/%d validation samples (not divisible by 16)",
-                    remainder,
-                    val_neg.shape[0],
-                )
-            val_neg = val_neg[:n_full].reshape(-1, 16, 96)
-        neg = np.concatenate([neg, val_neg], axis=0) if neg.shape[0] > 0 else val_neg
+        if val_neg.ndim == 3 and val_neg.shape[1:] == (n_frames, n_channels):
+            neg = np.concatenate([neg, val_neg], axis=0) if neg.shape[0] > 0 else val_neg
+        else:
+            logger.warning(
+                "Validation features shape %s doesn't match expected (%d, %d), skipping",
+                val_neg.shape,
+                n_frames,
+                n_channels,
+            )
 
     if pos.shape[0] == 0:
         raise ValueError(
@@ -59,18 +61,27 @@ def _load_validation_features(config: WakeWordConfig) -> tuple[np.ndarray, np.nd
     return pos, neg
 
 
-def _predict_onnx(
-    session: ort.InferenceSession,
+def _predict_tflite(
+    interpreter: object,
     features: np.ndarray,
     batch_size: int = 1,
 ) -> np.ndarray:
-    """Run ONNX model on feature batches, return scores array."""
-    input_name = session.get_inputs()[0].name
+    """Run TFLite model on feature batches, return scores array."""
+    input_details = interpreter.get_input_details()  # type: ignore[union-attr]
+    output_details = interpreter.get_output_details()  # type: ignore[union-attr]
+    input_index = input_details[0]["index"]
+    output_index = output_details[0]["index"]
+
     all_scores: list[np.ndarray] = []
     for i in range(0, len(features), batch_size):
         batch = features[i : i + batch_size].astype(np.float32)
-        outputs = session.run(None, {input_name: batch})
-        all_scores.append(outputs[0].squeeze(-1))
+        # TFLite typically expects batch_size=1
+        for j in range(batch.shape[0]):
+            single = batch[j : j + 1]
+            interpreter.set_tensor(input_index, single)  # type: ignore[union-attr]
+            interpreter.invoke()  # type: ignore[union-attr]
+            output = interpreter.get_tensor(output_index)  # type: ignore[union-attr]
+            all_scores.append(output.squeeze(-1))
     return np.concatenate(all_scores, axis=0)
 
 
@@ -177,17 +188,18 @@ def run_eval(config: WakeWordConfig, model_path: str | Path) -> dict[str, float]
 
     Args:
         config: Wake word configuration (used to locate validation data).
-        model_path: Path to the ONNX classifier model to evaluate.
+        model_path: Path to the TFLite classifier model to evaluate.
 
     Returns:
         Dict with keys: aut, fpph, recall, accuracy, threshold
     """
-    # Load ONNX model
+    # Load TFLite model
     model_path = Path(model_path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
 
-    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+    interpreter = _load_tflite_interpreter(model_path)
+    interpreter.allocate_tensors()  # type: ignore[union-attr]
     logger.info(f"Loaded model from {model_path}")
 
     # Load validation data
@@ -195,8 +207,8 @@ def run_eval(config: WakeWordConfig, model_path: str | Path) -> dict[str, float]
 
     # Run predictions
     logger.info("Running predictions on validation set...")
-    pos_scores = _predict_onnx(session, pos_features)
-    neg_scores = _predict_onnx(session, neg_features)
+    pos_scores = _predict_tflite(interpreter, pos_features)
+    neg_scores = _predict_tflite(interpreter, neg_features)
 
     # Compute DET curve
     thresholds, fpr, fnr = _compute_det_curve(pos_scores, neg_scores)

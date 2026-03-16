@@ -6,7 +6,7 @@ from .inference.model import WakeWordModel
 __version__ = "0.1.0"
 
 # Training / CLI imports are lazy-loaded so that the core inference API
-# works with only numpy + onnxruntime (no torch, pydantic, etc.).
+# works with only numpy + tflite-runtime (no tensorflow, pydantic, etc.).
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "WakeWordConfig": (".config", "WakeWordConfig"),
     "load_config": (".config", "load_config"),
@@ -14,7 +14,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "run_extraction": (".data.features", "run_extraction"),
     "run_generate": (".data.generate", "run_generate"),
     "run_train": (".training.trainer", "run_train"),
-    "run_export": (".export.onnx", "run_export"),
+    "run_export": (".export.tflite", "run_export"),
     "run_eval": (".eval.evaluate", "run_eval"),
 }
 
