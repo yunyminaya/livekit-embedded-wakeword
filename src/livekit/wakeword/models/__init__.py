@@ -1,14 +1,14 @@
 """Neural network models for wake word detection."""
 
-# Feature extractors use ONNX only — safe to import eagerly.
-from .feature_extractor import MelSpectrogramFrontend, SpeechEmbedding
+# Feature extractor uses only numpy — safe to import eagerly.
+from .feature_extractor import MicroFrontend
 
-# Classifier / pipeline modules require torch and are lazy-loaded so that the
-# inference-only path (numpy + onnxruntime) works without torch installed.
+# Classifier / pipeline modules require tensorflow and are lazy-loaded so that
+# the inference-only path (numpy + tflite-runtime) works without tensorflow.
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
-    "DNNClassifier": (".classifier", "DNNClassifier"),
-    "FCNBlock": (".classifier", "FCNBlock"),
-    "RNNClassifier": (".classifier", "RNNClassifier"),
+    "InceptionClassifier": (".classifier", "InceptionClassifier"),
+    "MixedNetClassifier": (".classifier", "MixedNetClassifier"),
+    "SubSpectralNormalization": (".classifier", "SubSpectralNormalization"),
     "build_classifier": (".classifier", "build_classifier"),
     "WakeWordClassifier": (".pipeline", "WakeWordClassifier"),
 }
@@ -25,11 +25,10 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
-    "DNNClassifier",
-    "FCNBlock",
-    "MelSpectrogramFrontend",
-    "RNNClassifier",
-    "SpeechEmbedding",
+    "InceptionClassifier",
+    "MicroFrontend",
+    "MixedNetClassifier",
+    "SubSpectralNormalization",
     "WakeWordClassifier",
     "build_classifier",
 ]
