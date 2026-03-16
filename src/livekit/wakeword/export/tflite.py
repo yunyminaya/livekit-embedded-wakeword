@@ -121,13 +121,14 @@ def export_qat_classifier(
     with INT8 input type for optimal ESP32-S3 inference.
     """
     import tensorflow_model_optimization as tfmot
+    import tf_keras
 
     model_dir = config.model_output_dir
     qat_path = model_dir / f"{config.model_name}.qat.keras"
     if not qat_path.exists():
         raise FileNotFoundError(f"QAT model not found: {qat_path}")
 
-    qat_model = tf.keras.models.load_model(str(qat_path))
+    qat_model = tf_keras.models.load_model(str(qat_path))
     stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
 
     n_frames = config.n_frames

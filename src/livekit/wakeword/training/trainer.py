@@ -408,25 +408,80 @@ class WakeWordTrainer:
         )
 
     def _qat_phase(self, dataset: tf.data.Dataset) -> None:
-        """Quantization-aware training phase: insert FakeQuant ops and fine-tune."""
+        """Quantization-aware training phase: insert FakeQuant ops and fine-tune.
+
+        Uses tf_keras (legacy Keras 2) because tensorflow-model-optimization
+        does not support Keras 3. The fused RepCNN model is rebuilt with
+        tf_keras layers, quantized, fine-tuned, then saved for TFLite export.
+        """
         try:
             import tensorflow_model_optimization as tfmot
+            import tf_keras
         except ImportError:
             logger.warning(
-                "tensorflow-model-optimization not installed, skipping QAT. "
-                "Install with: pip install tensorflow-model-optimization"
+                "tensorflow-model-optimization or tf-keras not installed, skipping QAT. "
+                "Install with: pip install tensorflow-model-optimization tf-keras"
             )
             return
 
         logger.info(f"=== QAT Phase: {self.config.qat_steps} steps ===")
 
-        # For RepCNN, reparameterize first so tfmot gets plain layers
-        if self.config.model.model_type == ModelType.repcnn:
-            from ..models.classifier import reparameterize_model
+        n_frames = self.config.n_frames
+        n_channels = self.config.augmentation.num_channels
 
-            base_model = reparameterize_model(self.model.classifier)
+        # Build a tf_keras functional model with fused weights (tfmot requires tf_keras)
+        if self.config.model.model_type == ModelType.repcnn:
+            from ..models.classifier import _fuse_conv_bn
+
+            rep_model = self.model.classifier
+
+            inp = tf_keras.Input(shape=(n_frames, n_channels))
+            x = tf_keras.layers.Reshape((n_frames, n_channels, 1))(inp)
+
+            # Fused init conv + BN
+            k_init, b_init = _fuse_conv_bn(rep_model.init_conv, rep_model.init_bn)
+            init_conv = tf_keras.layers.Conv2D(
+                int(k_init.shape[-1]), (3, 3), padding="same", name="fused_init"
+            )
+            x = init_conv(x)
+            init_conv.set_weights([k_init, b_init])
+            x = tf_keras.layers.ReLU()(x)
+
+            # Fused RepDS blocks
+            for i, block in enumerate(rep_model.rep_blocks):
+                dw_k, dw_b, pw_k, pw_b = block.fuse()
+                residual = x
+
+                dw = tf_keras.layers.DepthwiseConv2D(
+                    (3, 3),
+                    dilation_rate=(block._dilation, 1),
+                    padding="same",
+                    depth_multiplier=1,
+                    name=f"fused_dw_{i}",
+                )
+                x = dw(x)
+                dw.set_weights([dw_k, dw_b])
+                x = tf_keras.layers.ReLU()(x)
+
+                pw = tf_keras.layers.Conv2D(
+                    int(pw_k.shape[-1]), (1, 1), padding="same", name=f"fused_pw_{i}"
+                )
+                x = pw(x)
+                pw.set_weights([pw_k, pw_b])
+                x = tf_keras.layers.ReLU()(x)
+
+                if block._has_residual:
+                    x = tf_keras.layers.Add()([x, residual])
+
+            x = tf_keras.layers.GlobalAveragePooling2D()(x)
+            dense = tf_keras.layers.Dense(1, activation="sigmoid", name="fused_dense")
+            x = dense(x)
+            dense.set_weights(rep_model.dense_out.get_weights())
+
+            base_model = tf_keras.Model(inputs=inp, outputs=x, name="fused_repcnn_qat")
         else:
-            base_model = self.model
+            logger.warning("QAT is only supported for repcnn model type, skipping")
+            return
 
         # Wrap with quantization-aware training
         try:
@@ -436,11 +491,8 @@ class WakeWordTrainer:
             return
 
         qat_lr = self.config.learning_rate * 0.001
-        optimizer = tf.keras.optimizers.AdamW(
-            learning_rate=qat_lr,
-            weight_decay=self.config.weight_decay,
-        )
-        optimizer.build(qat_model.trainable_variables)
+        optimizer = tf_keras.optimizers.Adam(learning_rate=qat_lr)
+        qat_model.compile(optimizer=optimizer, loss="binary_crossentropy")
 
         label_smoothing_t = tf.constant(self.config.label_smoothing, dtype=tf.float32)
         neg_weight_t = tf.constant(self.config.max_negative_weight, dtype=tf.float32)
