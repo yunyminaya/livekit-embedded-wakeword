@@ -29,6 +29,7 @@ setup: |
   uv run livekit-wakeword setup --data-dir ${DATA_DIR}
 
 run: |
+  set -e
   export PATH="$HOME/.cargo/bin:$PATH"
   ln -sfn ${DATA_DIR} data
   ln -sfn ${OUTPUT_DIR} output
