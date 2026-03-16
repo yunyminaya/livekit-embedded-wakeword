@@ -35,8 +35,6 @@ class SubSpectralNormalization(tf.keras.layers.Layer):  # type: ignore[misc]
         self, x: tf.Tensor, training: bool | None = None
     ) -> tf.Tensor:
         # x: (batch, time, freq, channels)
-        freq_dim = tf.shape(x)[2]
-        sub_band_size = freq_dim // self.num_sub_bands
         sub_bands = tf.split(x, self.num_sub_bands, axis=2)
         normalized = [
             bn(sb, training=training)
@@ -162,7 +160,6 @@ class InceptionClassifier(tf.keras.Model):  # type: ignore[misc]
             tf.keras.layers.ReLU,
         ]] = []
         for i in range(n_cnn1_blocks):
-            in_f = 1 if i == 0 else filters
             conv = tf.keras.layers.Conv2D(
                 filters, (5, 5), padding="same", name=f"cnn1_conv_{i}"
             )

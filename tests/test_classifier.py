@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import tensorflow as tf
 
 from livekit.wakeword.config import ModelSize, ModelType
 from livekit.wakeword.models.classifier import (

@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from livekit.wakeword.config import (
     MODEL_SIZE_PRESETS,
-    AugmentationConfig,
     ModelConfig,
     ModelSize,
     ModelType,

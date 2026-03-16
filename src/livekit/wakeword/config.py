@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Self
 
@@ -13,12 +13,12 @@ from pydantic import BaseModel, Field, model_validator
 _logger = logging.getLogger(__name__)
 
 
-class ModelType(str, Enum):
+class ModelType(StrEnum):
     inception = "inception"
     mixednet = "mixednet"
 
 
-class ModelSize(str, Enum):
+class ModelSize(StrEnum):
     tiny = "tiny"
     small = "small"
     medium = "medium"

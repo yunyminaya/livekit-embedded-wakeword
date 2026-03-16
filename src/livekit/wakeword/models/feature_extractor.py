@@ -13,7 +13,6 @@ For a 2.0 s clip (32 000 samples) this produces 99 frames × 40 features.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import numpy as np
 

@@ -11,11 +11,8 @@ import pytest
 
 from livekit.wakeword.inference.listener import (
     CHUNK_FRAMES,
-    Detection,
     WakeWordListener,
-    FRAME_SAMPLES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,7 +50,7 @@ class FakeStream:
     def read(self, num_frames: int, exception_on_overflow: bool = False) -> bytes:
         self._read_count += 1
         if self._error_after is not None and self._read_count > self._error_after:
-            raise IOError("Simulated stream read error")
+            raise OSError("Simulated stream read error")
         return np.zeros(num_frames, dtype=np.int16).tobytes()
 
     def stop_stream(self) -> None:
@@ -104,7 +101,7 @@ async def test_predict_runs_in_executor():
     stream = FakeStream()
 
     with _patch_pyaudio(stream):
-        async with WakeWordListener(model, threshold=0.5) as listener:
+        async with WakeWordListener(model, threshold=0.5):
             await asyncio.sleep(0.5)
 
     assert len(predict_threads) > 0
@@ -227,6 +224,6 @@ async def test_shutdown_during_active_listening():
     stream = FakeStream()
 
     with _patch_pyaudio(stream):
-        async with WakeWordListener(model, threshold=0.5) as listener:
+        async with WakeWordListener(model, threshold=0.5):
             await asyncio.sleep(0.2)  # let loop run a few iterations
     # If we reach here without hanging, shutdown is clean.

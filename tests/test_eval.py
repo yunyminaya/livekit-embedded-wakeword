@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
-import pytest
 
 from livekit.wakeword.eval.evaluate import (
     _compute_aut,

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import WakeWordConfig
-from ..models.feature_extractor import MicroFrontend, compute_n_frames
+from ..models.feature_extractor import MicroFrontend
 
 logger = logging.getLogger(__name__)
 
