@@ -127,6 +127,11 @@ def _download_microwakeword_features(features_dir: Path) -> None:
     import zipfile
 
     repo_id = "binhpham/livekit_embedded_wakeword_features"
+
+    # Training negatives get a raw_ prefix so _combine_negative_features
+    # can merge them into a single speech_features.npy without self-collision.
+    _raw_prefix_zips = {"speech.zip", "no_speech.zip", "speech_background.zip",
+                        "no_speech_background.zip"}
     feature_zips = [
         "speech.zip",
         "no_speech.zip",
@@ -137,7 +142,8 @@ def _download_microwakeword_features(features_dir: Path) -> None:
     ]
 
     for zip_name in feature_zips:
-        npy_name = zip_name.replace(".zip", "_features.npy")
+        base_name = zip_name.replace(".zip", "_features.npy")
+        npy_name = f"raw_{base_name}" if zip_name in _raw_prefix_zips else base_name
         npy_path = features_dir / npy_name
         if npy_path.exists():
             logger.info(f"Features already exist: {npy_path}")
@@ -168,6 +174,21 @@ def _download_microwakeword_features(features_dir: Path) -> None:
     _combine_negative_features(features_dir)
 
 
+def _find_mmap_dir(extract_dir: Path) -> Path:
+    """Find the actual RaggedMmap directory within a nested zip extraction.
+
+    The HuggingFace dataset zips have nested structures like:
+      speech/speech/training/voices_lav_clo_training_mmap/
+    We need the directory that contains mmap-ninja files (dtype.ninja etc.)
+    at its root level and whose name ends with '_mmap'.
+    """
+    for candidate in extract_dir.rglob("*_mmap"):
+        if candidate.is_dir() and (candidate / "dtype.ninja").exists():
+            return candidate
+    # Fallback: try the extract_dir itself (flat layout)
+    return extract_dir
+
+
 def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
     """Convert mmap-ninja RaggedMmap directory to a fixed-size .npy file.
 
@@ -182,7 +203,9 @@ def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
     try:
         from mmap_ninja.ragged import RaggedMmap
 
-        mmap_data = RaggedMmap(str(ragged_dir))
+        mmap_dir = _find_mmap_dir(ragged_dir)
+        logger.info(f"Found mmap directory: {mmap_dir}")
+        mmap_data = RaggedMmap(str(mmap_dir))
         n_samples = len(mmap_data)
 
         if n_samples == 0:
@@ -221,21 +244,27 @@ def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
 
 
 def _combine_negative_features(features_dir: Path) -> None:
-    """Combine individual negative feature files into training/validation sets."""
+    """Combine individual negative feature files into training/validation sets.
+
+    Individual source files are saved with a ``_raw_`` prefix to avoid
+    name-collision with the combined output (``speech_features.npy``).
+    """
     import numpy as np
 
-    # Training negatives: speech + no_speech + speech_background + no_speech_background
-    train_files = [
-        "speech_features.npy",
-        "no_speech_features.npy",
-        "speech_background_features.npy",
-        "no_speech_background_features.npy",
+    # Training negatives: individual raw files → combined speech_features.npy
+    raw_files = [
+        "raw_speech_features.npy",
+        "raw_no_speech_features.npy",
+        "raw_speech_background_features.npy",
+        "raw_no_speech_background_features.npy",
     ]
     train_arrays = []
-    for fname in train_files:
+    for fname in raw_files:
         fpath = features_dir / fname
         if fpath.exists():
-            train_arrays.append(np.load(str(fpath)))
+            arr = np.load(str(fpath))
+            if arr.shape[0] > 0:
+                train_arrays.append(arr)
 
     if train_arrays:
         combined = np.concatenate(train_arrays, axis=0)
