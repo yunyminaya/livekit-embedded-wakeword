@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 
 from ..config import WakeWordConfig
 
@@ -18,8 +17,8 @@ logger = logging.getLogger(__name__)
 class AudioAugmentor:
     """Augmentation pipeline for wake word clips.
 
-    Applies per-sample and batched augmentations, RIR convolution,
-    and background noise mixing.
+    Applies per-sample augmentations using audiomentations,
+    RIR convolution, and background noise mixing.
     """
 
     def __init__(
@@ -31,8 +30,7 @@ class AudioAugmentor:
         self.sample_rate = sample_rate
         self.background_files = self._collect_wavs(background_paths)
         self.rir_files = self._collect_wavs(rir_paths)
-        self._per_sample_aug = None
-        self._batch_aug = None
+        self._augmentation_chain: Any = None
 
     @staticmethod
     def _collect_wavs(dirs: list[Path]) -> list[Path]:
@@ -42,61 +40,37 @@ class AudioAugmentor:
                 wavs.extend(d.glob("**/*.wav"))
         return wavs
 
-    def _get_per_sample_augmentations(self) -> Any:
-        """Lazy-load audiomentations transforms."""
-        if self._per_sample_aug is None:
-            from audiomentations import Compose, SevenBandParametricEQ, TanhDistortion
-
-            self._per_sample_aug = Compose(
-                [
-                    SevenBandParametricEQ(p=0.25),
-                    TanhDistortion(p=0.25),
-                ]
-            )
-        return self._per_sample_aug
-
-    def _get_batch_augmentations(self) -> Any:
-        """Lazy-load torch-audiomentations transforms."""
-        if self._batch_aug is None:
-            from torch_audiomentations import (
-                AddBackgroundNoise,
+    def _get_augmentation_chain(self) -> Any:
+        """Lazy-load audiomentations transforms (all per-sample)."""
+        if self._augmentation_chain is None:
+            from audiomentations import (
                 AddColoredNoise,
                 BandStopFilter,
                 Compose,
                 Gain,
                 PitchShift,
+                SevenBandParametricEQ,
+                TanhDistortion,
             )
 
             transforms = [
                 PitchShift(
-                    min_transpose_semitones=-3.0,
-                    max_transpose_semitones=3.0,
-                    sample_rate=self.sample_rate,
+                    min_semitones=-3.0,
+                    max_semitones=3.0,
                     p=0.25,
                 ),
                 BandStopFilter(p=0.25),
                 AddColoredNoise(p=0.25),
                 Gain(
-                    min_gain_in_db=-6.0,
-                    max_gain_in_db=6.0,
+                    min_gain_db=-6.0,
+                    max_gain_db=6.0,
                     p=0.5,
                 ),
+                SevenBandParametricEQ(p=0.25),
+                TanhDistortion(p=0.25),
             ]
-            if self.background_files:
-                # Collect all unique parent directories containing background audio
-                bg_dirs = list({str(p.parent) for p in self.background_files})
-                transforms.insert(
-                    3,
-                    AddBackgroundNoise(
-                        background_paths=bg_dirs,
-                        min_snr_in_db=0.0,
-                        max_snr_in_db=15.0,
-                        sample_rate=self.sample_rate,
-                        p=0.75,
-                    ),
-                )
-            self._batch_aug = Compose(transforms)
-        return self._batch_aug
+            self._augmentation_chain = Compose(transforms)
+        return self._augmentation_chain
 
     def apply_rir(self, audio: np.ndarray, p: float = 0.5) -> np.ndarray:
         """Convolve audio with a random room impulse response."""
@@ -116,20 +90,8 @@ class AudioAugmentor:
 
     def augment_clip(self, audio: np.ndarray) -> np.ndarray:
         """Apply per-sample augmentations to a single clip."""
-        aug = self._get_per_sample_augmentations()
+        aug = self._get_augmentation_chain()
         return aug(samples=audio, sample_rate=self.sample_rate)
-
-    def augment_batch(self, batch: torch.Tensor) -> torch.Tensor:
-        """Apply batched augmentations.
-
-        Args:
-            batch: (batch, 1, samples) tensor
-
-        Returns:
-            (batch, 1, samples) augmented tensor
-        """
-        aug = self._get_batch_augmentations()
-        return aug(batch, sample_rate=self.sample_rate).samples
 
     def mix_with_background(
         self,
@@ -226,6 +188,7 @@ def _augment_directory(
     target_length = int(target_duration_s * sample_rate)
     # Only read original clips (clip_000000.wav) — exclude augmented variants (clip_000000_r1.wav)
     import re
+
     _orig_re = re.compile(r"^clip_\d{6}\.wav$")
     wav_files = sorted(p for p in clip_dir.glob("*.wav") if _orig_re.match(p.name))
 

@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 import numpy as np
-import torch
-from torch.utils.data import DataLoader, IterableDataset
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +22,7 @@ def mmap_batch_generator(
     Files are memory-mapped so data larger than RAM can be used.
 
     Yields:
-        (features, labels) where features is (batch_size, 16, 96)
+        (features, labels) where features is (batch_size, n_frames, num_channels)
         and labels is (batch_size,) with 0/1 values.
     """
     # Memory-map all files
@@ -35,16 +33,11 @@ def mmap_batch_generator(
             logger.warning(f"Data file not found: {path}, skipping class '{name}'")
             continue
         data = np.load(str(path), mmap_mode="r")
-        # Reshape 2D (N, 96) → 3D (N//16, 16, 96) for pre-extracted embeddings
-        if data.ndim == 2 and data.shape[1] == 96:
-            n_full = (data.shape[0] // 16) * 16
-            data = data[:n_full].reshape(-1, 16, 96)
-        # Validate embedding dimension matches expected 96-dim vectors
-        if data.ndim == 3 and data.shape[2] != 96:
+        # Validate: expect 3D (N, n_frames, num_channels)
+        if data.ndim != 3:
             raise ValueError(
-                f"Feature dimension mismatch for '{name}': expected 96, "
-                f"got {data.shape[2]}. The file {path} may have been generated "
-                f"with a different embedding model."
+                f"Expected 3D features for '{name}', got shape {data.shape}. "
+                f"The file {path} may need to be re-extracted."
             )
         mmaps[name] = data
         logger.info(f"Loaded {name}: shape={mmaps[name].shape} from {path}")
@@ -96,48 +89,26 @@ def mmap_batch_generator(
         yield features[perm], labels[perm]
 
 
-class WakeWordDataset(IterableDataset):  # type: ignore[type-arg]
-    """IterableDataset wrapping mmap_batch_generator for DataLoader."""
-
-    def __init__(
-        self,
-        data_files: dict[str, str | Path],
-        n_per_class: dict[str, int],
-        label_funcs: dict[str, Callable[[np.ndarray], int]],
-    ):
-        self.data_files = data_files
-        self.n_per_class = n_per_class
-        self.label_funcs = label_funcs
-
-    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
-        gen = mmap_batch_generator(
-            data_files=self.data_files,
-            n_per_class=self.n_per_class,
-            label_funcs=self.label_funcs,
-        )
-        for features, labels in gen:
-            yield (
-                torch.from_numpy(features.copy()),
-                torch.from_numpy(labels.copy()),
-            )
-
-
-def create_dataloader(
+def create_tf_dataset(
     data_files: dict[str, str | Path],
     n_per_class: dict[str, int],
     label_funcs: dict[str, Callable[[np.ndarray], int]],
-    prefetch_factor: int = 16,
-    num_workers: int = 0,
-) -> DataLoader:  # type: ignore[type-arg]
-    """Create a DataLoader from memory-mapped feature files."""
-    dataset = WakeWordDataset(
-        data_files=data_files,
-        n_per_class=n_per_class,
-        label_funcs=label_funcs,
-    )
-    return DataLoader(
-        dataset,
-        batch_size=None,  # Dataset yields pre-batched data
-        num_workers=num_workers,
-        prefetch_factor=prefetch_factor if num_workers > 0 else None,
-    )
+    n_frames: int = 99,
+    num_channels: int = 40,
+) -> object:
+    """Create a tf.data.Dataset from the memory-mapped batch generator.
+
+    Returns a tf.data.Dataset yielding (features, labels) batches.
+    """
+    import tensorflow as tf
+
+    def _gen() -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        yield from mmap_batch_generator(data_files, n_per_class, label_funcs)
+
+    return tf.data.Dataset.from_generator(
+        _gen,
+        output_signature=(
+            tf.TensorSpec(shape=(None, n_frames, num_channels), dtype=tf.float32),
+            tf.TensorSpec(shape=(None,), dtype=tf.float32),
+        ),
+    ).prefetch(tf.data.AUTOTUNE)

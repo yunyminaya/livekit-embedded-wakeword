@@ -1,4 +1,4 @@
-"""Feature extraction: audio → mel-spectrogram → speech embeddings → .npy."""
+"""Feature extraction: audio → micro_speech spectrogram → .npy."""
 
 from __future__ import annotations
 
@@ -8,25 +8,21 @@ from pathlib import Path
 import numpy as np
 
 from ..config import WakeWordConfig
-from ..models.feature_extractor import MelSpectrogramFrontend, SpeechEmbedding
-from ..resources import get_embedding_model_path, get_mel_model_path
+from ..models.feature_extractor import MicroFrontend, compute_n_frames
 
 logger = logging.getLogger(__name__)
-
-# Target: 16 embedding timesteps per training example
-N_EMBEDDING_TIMESTEPS = 16
 
 
 def extract_features_from_directory(
     clip_dir: Path,
-    mel_frontend: MelSpectrogramFrontend,
-    speech_embedding: SpeechEmbedding,
+    frontend: MicroFrontend,
+    n_frames: int,
     batch_size: int = 32,
 ) -> np.ndarray:
-    """Extract (N_clips, 16, 96) features from a directory of WAV files.
+    """Extract (N_clips, n_frames, 40) features from a directory of WAV files.
 
-    Processes clips through MelSpectrogramFrontend → SpeechEmbedding,
-    then takes last 16 embedding timesteps per clip.
+    Processes clips through MicroFrontend, then pads/truncates to
+    canonical n_frames per clip.
     """
     import soundfile as sf
     from tqdm import tqdm
@@ -34,7 +30,7 @@ def extract_features_from_directory(
     wav_files = sorted(clip_dir.glob("*.wav"))
     if not wav_files:
         logger.warning(f"No WAV files in {clip_dir}")
-        return np.zeros((0, N_EMBEDDING_TIMESTEPS, 96), dtype=np.float32)
+        return np.zeros((0, n_frames, frontend.num_channels), dtype=np.float32)
 
     all_features: list[np.ndarray] = []
 
@@ -44,39 +40,36 @@ def extract_features_from_directory(
             audio = audio[:, 0]
         audio = audio.astype(np.float32)
 
-        # Stage 1: mel spectrogram — (1, time_frames, 32)
-        mel = mel_frontend(audio)
+        # Compute spectrogram: (1, actual_frames, num_channels)
+        spec = frontend(audio)
+        clip_spec = spec[0]  # (actual_frames, num_channels)
 
-        # Stage 2: speech embeddings — (1, n_windows, 96)
-        embeddings = speech_embedding.extract_embeddings(mel)
-        clip_emb = embeddings[0]  # (n_windows, 96)
-
-        # Take last N_EMBEDDING_TIMESTEPS or pad on the left
-        if clip_emb.shape[0] >= N_EMBEDDING_TIMESTEPS:
-            clip_emb = clip_emb[-N_EMBEDDING_TIMESTEPS:]
+        # Pad or truncate to canonical n_frames
+        if clip_spec.shape[0] >= n_frames:
+            clip_spec = clip_spec[-n_frames:]
         else:
             pad = np.zeros(
-                (N_EMBEDDING_TIMESTEPS - clip_emb.shape[0], 96),
+                (n_frames - clip_spec.shape[0], frontend.num_channels),
                 dtype=np.float32,
             )
-            clip_emb = np.concatenate([pad, clip_emb], axis=0)
+            clip_spec = np.concatenate([pad, clip_spec], axis=0)
 
-        all_features.append(clip_emb)
+        all_features.append(clip_spec)
 
     if not all_features:
-        return np.zeros((0, N_EMBEDDING_TIMESTEPS, 96), dtype=np.float32)
+        return np.zeros((0, n_frames, frontend.num_channels), dtype=np.float32)
 
-    return np.stack(all_features, axis=0)  # (N_clips, 16, 96)
+    return np.stack(all_features, axis=0)  # (N_clips, n_frames, num_channels)
 
 
 def run_extraction(config: WakeWordConfig) -> None:
     """Extract and save features for all splits of a wake word config."""
-    mel_frontend = MelSpectrogramFrontend(
-        onnx_path=get_mel_model_path(),
+    frontend = MicroFrontend(
+        window_size_ms=config.augmentation.window_size_ms,
+        window_step_ms=config.augmentation.window_step_ms,
+        num_channels=config.augmentation.num_channels,
     )
-    speech_embedding = SpeechEmbedding(
-        onnx_path=get_embedding_model_path(),
-    )
+    n_frames = config.n_frames
 
     model_dir = config.model_output_dir
     splits = [
@@ -95,8 +88,8 @@ def run_extraction(config: WakeWordConfig) -> None:
         logger.info(f"Extracting features from {clip_dir}...")
         features = extract_features_from_directory(
             clip_dir=clip_dir,
-            mel_frontend=mel_frontend,
-            speech_embedding=speech_embedding,
+            frontend=frontend,
+            n_frames=n_frames,
             batch_size=config.augmentation.batch_size,
         )
 
