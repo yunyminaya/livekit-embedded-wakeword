@@ -14,9 +14,8 @@ _logger = logging.getLogger(__name__)
 
 
 class ModelType(str, Enum):
-    dnn = "dnn"
-    rnn = "rnn"
-    conv_attention = "conv_attention"
+    inception = "inception"
+    mixednet = "mixednet"
 
 
 class ModelSize(str, Enum):
@@ -26,12 +25,14 @@ class ModelSize(str, Enum):
     large = "large"
 
 
-# Preset mapping: size -> (layer_dim, n_blocks)
+# Preset mapping: size -> (filters, n_blocks)
+# For inception: filters is base channel count, n_blocks is inception block count
+# For mixednet: filters is channel count, n_blocks is mixconv block count
 MODEL_SIZE_PRESETS: dict[ModelSize, tuple[int, int]] = {
-    ModelSize.tiny: (16, 1),
-    ModelSize.small: (32, 1),
-    ModelSize.medium: (128, 2),
-    ModelSize.large: (256, 3),
+    ModelSize.tiny: (8, 2),
+    ModelSize.small: (16, 3),
+    ModelSize.medium: (24, 5),
+    ModelSize.large: (32, 7),
 }
 
 
@@ -42,13 +43,18 @@ class AugmentationConfig(BaseModel):
     background_paths: list[str] = Field(default_factory=lambda: ["./data/backgrounds"])
     rir_paths: list[str] = Field(default_factory=lambda: ["./data/rirs"])
 
+    # Spectrogram parameters (matching micro_speech TFLite preprocessor)
+    window_size_ms: int = 30
+    window_step_ms: int = 20
+    num_channels: int = 40
+
 
 class ModelConfig(BaseModel):
-    model_type: ModelType = ModelType.conv_attention
+    model_type: ModelType = ModelType.inception
     model_size: ModelSize = ModelSize.small
 
     @property
-    def layer_dim(self) -> int:
+    def filters(self) -> int:
         return MODEL_SIZE_PRESETS[self.model_size][0]
 
     @property
@@ -96,13 +102,13 @@ class WakeWordConfig(BaseModel):
         default_factory=lambda: {
             "positive": 50,
             "adversarial_negative": 50,
-            "ACAV100M_sample": 1024,
+            "negative_speech": 1024,
         }
     )
 
     @model_validator(mode="after")
     def _warn_unknown_batch_keys(self) -> Self:
-        known_keys = {"positive", "adversarial_negative", "ACAV100M_sample"}
+        known_keys = {"positive", "adversarial_negative", "negative_speech"}
         unknown = set(self.batch_n_per_class) - known_keys
         if unknown:
             _logger.warning(
@@ -118,6 +124,18 @@ class WakeWordConfig(BaseModel):
     @property
     def data_path(self) -> Path:
         return Path(self.data_dir)
+
+    @property
+    def n_frames(self) -> int:
+        """Number of spectrogram frames for the configured clip duration."""
+        from .models.feature_extractor import compute_n_frames
+
+        total_samples = int(self.augmentation.clip_duration * 16000)
+        return compute_n_frames(
+            total_samples,
+            self.augmentation.window_size_ms,
+            self.augmentation.window_step_ms,
+        )
 
 
 def load_config(path: str | Path) -> WakeWordConfig:

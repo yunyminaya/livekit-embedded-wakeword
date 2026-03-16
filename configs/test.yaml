@@ -34,13 +34,16 @@ augmentation:
   rounds: 1
   background_paths: [./data/backgrounds]
   rir_paths: [./data/rirs]
+  window_size_ms: 30
+  window_step_ms: 20
+  num_channels: 40
 
 # ============================================================================
 # Model Architecture
 # ============================================================================
 
 model:
-  model_type: dnn
+  model_type: inception
   model_size: tiny
 
 # ============================================================================
@@ -55,4 +58,4 @@ target_fp_per_hour: 1.0
 batch_n_per_class:
   positive: 10
   adversarial_negative: 10
-  ACAV100M_sample: 64
+  negative_speech: 64
