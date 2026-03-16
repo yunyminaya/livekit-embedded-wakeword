@@ -104,12 +104,14 @@ augmentation:
 
 model:
   # Classifier type:
-  #   "inception"  — Inception CNN with sub-spectral normalization (recommended)
+  #   "repcnn"     — RepVGG-style dilated DS-conv (recommended for ESP32-S3)
+  #   "inception"  — Inception CNN with sub-spectral normalization
   #   "mixednet"   — MixedNet with multi-kernel depthwise convolutions
-  model_type: inception
+  model_type: repcnn
 
-  # Model size: tiny (8f/2b), small (16f/3b), medium (24f/5b), large (32f/7b)
-  # Suggestion: small for embedded, medium for server, large for max accuracy
+  # Model size: tiny (8f/2b), small (16f/3b), medium (24f/5b), large (32f/7b),
+  #             xlarge (48f/9b), xxlarge (64f/11b)
+  # Suggestion: small for embedded, medium for server, large+ for max accuracy
   model_size: medium
 
 # ============================================================================
