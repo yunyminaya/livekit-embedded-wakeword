@@ -111,10 +111,10 @@ def _download_piper(piper_dir: Path) -> None:
 
 
 def _download_microwakeword_features(features_dir: Path) -> None:
-    """Download microWakeWord precomputed spectrogram features from HuggingFace.
+    """Download precomputed spectrogram features from HuggingFace.
 
-    Downloads ZIP files from kahrendt/microwakeword, extracts them, and
-    converts the RaggedMmap (mmap-ninja) format to .npy files.
+    Downloads ZIP files from binhpham/livekit_embedded_wakeword_features,
+    extracts them, and converts the RaggedMmap (mmap-ninja) format to .npy files.
     """
     try:
         from huggingface_hub import hf_hub_download
@@ -126,7 +126,7 @@ def _download_microwakeword_features(features_dir: Path) -> None:
 
     import zipfile
 
-    repo_id = "kahrendt/microwakeword"
+    repo_id = "binhpham/livekit_embedded_wakeword_features"
     feature_zips = [
         "speech.zip",
         "no_speech.zip",

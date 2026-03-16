@@ -106,7 +106,7 @@ Float32 input is automatically converted to int16 (matching microWakeWord conven
 
 Using the exact same microfrontend C library for both training and inference ensures:
 
-1. **Exact match with microWakeWord precomputed features** — the HuggingFace `kahrendt/microwakeword` dataset was generated with this same library
+1. **Exact match with precomputed features** — the HuggingFace `binhpham/livekit_embedded_wakeword_features` dataset was generated with this same library
 2. **Exact match with on-device inference** — ESPHome's `micro_wake_word` component uses the same C code
 3. **No mismatch risk** — a numpy reimplementation would produce different values due to the noise reduction, PCAN, and log scaling specifics
 
