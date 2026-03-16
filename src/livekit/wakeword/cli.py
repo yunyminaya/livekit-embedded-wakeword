@@ -175,7 +175,7 @@ def _convert_ragged_to_npy(ragged_dir: Path, output_path: Path) -> None:
     """
     import numpy as np
 
-    from ..models.feature_extractor import NUM_CHANNELS, compute_n_frames
+    from .models.feature_extractor import NUM_CHANNELS, compute_n_frames
 
     n_frames = compute_n_frames(int(2.0 * 16000))  # 99 for 2.0s
 

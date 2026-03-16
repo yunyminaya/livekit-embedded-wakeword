@@ -55,6 +55,7 @@ train = [
 ]
 datagen = [
     "torch>=2.2",
+    "torchaudio>=2.2",
 ]
 eval = [
     "matplotlib>=3.8",
