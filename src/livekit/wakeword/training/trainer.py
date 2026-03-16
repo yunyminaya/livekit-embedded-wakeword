@@ -69,6 +69,9 @@ def focal_loss(
     Returns:
         Per-sample focal loss, shape (N,).
     """
+    # Cast to float32 for numerical stability (mixed precision outputs float16)
+    predictions = tf.cast(predictions, tf.float32)
+    targets = tf.cast(targets, tf.float32)
     # Clip to avoid log(0)
     eps = 1e-7
     predictions = tf.clip_by_value(predictions, eps, 1.0 - eps)
@@ -100,8 +103,8 @@ class WakeWordTrainer:
         self._metrics_path = config.model_output_dir / f"{config.model_name}_metrics.json"
         self._train_start: float = 0.0
 
-        # Compile the training step for GPU acceleration
-        self._compiled_train_step = tf.function(self._train_step)
+        # Compile the training step for GPU acceleration (XLA for kernel fusion)
+        self._compiled_train_step = tf.function(self._train_step, jit_compile=True)
 
     def _build_dataset(self) -> tf.data.Dataset:
         model_dir = self.config.model_output_dir
