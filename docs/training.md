@@ -1,6 +1,6 @@
 # Training Pipeline
 
-The training stage uses a 3-phase adaptive approach with focal loss, embedding mixup, AdamW optimization, and checkpoint averaging.
+The training stage uses a 3-phase adaptive approach with focal loss, spectrogram mixup, AdamW optimization, and checkpoint averaging, implemented in TensorFlow/Keras.
 
 **Source:** `src/livekit/wakeword/training/trainer.py`, `src/livekit/wakeword/training/metrics.py`
 **CLI:** `livekit-wakeword train <config>`
@@ -8,12 +8,12 @@ The training stage uses a 3-phase adaptive approach with focal loss, embedding m
 ## Overview
 
 ```
-.npy features (N, 16, 96)
+.npy features (N, 99, 40)
     │
     ▼
 Phase 1: Full Training
     LR warmup → hold → cosine decay
-    Focal loss + negative weighting + embedding mixup
+    Focal loss + negative weighting + spectrogram mixup
     │
     ▼
 Phase 2: Refinement
@@ -34,7 +34,7 @@ Threshold Optimization
     Scan 0.01–0.99 to maximize recall at target FPPH
     │
     ▼
-Final model (.pt)
+Final model (.weights.h5)
 ```
 
 ## 3-Phase Training
@@ -93,7 +93,9 @@ Phases 2 and 3 have no warmup or hold (warmup and hold steps are 0).
 
 ## Optimizer
 
-AdamW is used instead of plain Adam. AdamW decouples weight decay from the adaptive learning rate, providing proper L2 regularization. This is controlled by `config.weight_decay` (default: 0.01).
+AdamW (`tf.keras.optimizers.AdamW`) is used instead of plain Adam. AdamW decouples weight decay from the adaptive learning rate, providing proper L2 regularization. This is controlled by `config.weight_decay` (default: 0.01).
+
+Training uses `tf.GradientTape` for explicit gradient computation and manual learning rate scheduling.
 
 ## Negative Weight Schedule
 
@@ -111,7 +113,7 @@ Default `max_negative_weight` is 1500.0, meaning by the end of phase 1 the loss 
 
 ### Focal Loss
 
-Focal loss replaces the previous BCE + hard example mining approach. It inherently down-weights well-classified examples via a `(1 - p_t)^γ` modulating factor:
+Focal loss inherently down-weights well-classified examples via a `(1 - p_t)^γ` modulating factor:
 
 ```
 FL(p_t) = -(1 - p_t)^γ · log(p_t)
@@ -125,7 +127,7 @@ where `p_t` is the model's estimated probability for the correct class and `γ =
 | 2 (default) | Well-classified examples (p_t > 0.9) contribute ~100x less to the loss |
 | 5 | Even more aggressive down-weighting |
 
-This eliminates the need for the manual hard-example mining thresholds (0.1/0.9) that previously filtered samples. Focal loss achieves the same effect smoothly and with fewer hyperparameters.
+This eliminates the need for manual hard-example mining thresholds. Focal loss achieves the same effect smoothly and with fewer hyperparameters.
 
 ### Per-Sample Weighting
 
@@ -139,9 +141,9 @@ Training targets are softened from hard 0/1 to `ε/2` and `1 - ε/2`, where `ε 
 
 This prevents the model from producing overconfident sigmoid outputs (very close to 0.0 or 1.0), which improves score calibration and makes threshold-based detection more reliable.
 
-### Embedding Mixup
+### Spectrogram Mixup
 
-During training, random pairs of samples within each batch are interpolated in embedding space:
+During training, random pairs of samples within each batch are interpolated in spectrogram space:
 
 ```
 λ ~ Beta(0.2, 0.2)
@@ -156,9 +158,7 @@ The Beta(0.2, 0.2) distribution produces mixing coefficients that are usually cl
 ### Data Sources
 
 - **Positive:** `positive_features_test.npy`
-- **Negative:** `negative_features_test.npy` + optional `validation_set_features.npy` (from ACAV100M)
-
-If the external validation set has a sample count not divisible by 16 (required for the 2D→3D reshape), the remainder samples are dropped with a logged warning.
+- **Negative:** `negative_features_test.npy` + optional `validation_features.npy` (from microWakeWord precomputed features)
 
 ### Metrics
 
@@ -170,7 +170,7 @@ If the external validation set has a sample count not divisible by 16 (required 
 | Recall | `recall_at_threshold()` | True positive rate: `mean(positive_preds >= threshold)` |
 | Balanced Accuracy | `accuracy()` | `(TPR + TNR) / 2` at the given threshold |
 
-The `evaluate_model()` function computes all metrics at once. Validation hours are computed from the actual negative clip count × clip duration (default 2.0s), not a hardcoded value. This ensures FPPH is accurate regardless of whether the external ACAV100M validation set is present.
+The `evaluate_model()` function computes all metrics at once. Validation hours are computed from the actual negative clip count × clip duration (default 2.0s), not a hardcoded value.
 
 ### Validation Schedule
 
@@ -194,10 +194,10 @@ If no checkpoints meet all three criteria, the checkpoint with the highest recal
 
 ### Weight Averaging
 
-For qualifying checkpoints, each parameter tensor is stacked and averaged:
+For qualifying checkpoints, each weight array is stacked and averaged:
 
 ```python
-averaged[key] = mean(stack([ckpt[key] for ckpt in selected]))
+averaged[i] = mean(stack([ckpt.weights[i] for ckpt in selected]))
 ```
 
 This produces a smoother model that generalizes better than any single checkpoint.
@@ -215,15 +215,15 @@ The optimal threshold and its metrics are logged to `metrics.json` with `"note":
 
 ## Training Data Sources
 
-The dataloader loads features from:
+The dataset loads features from:
 
 | Class | Source File | Label |
 |-------|-----------|-------|
 | `positive` | `positive_features_train.npy` | 1 |
 | `adversarial_negative` | `negative_features_train.npy` | 0 |
-| `ACAV100M_sample` | `data/features/openwakeword_features_ACAV100M_2000_hrs_16bit.npy` | 0 |
+| `negative_speech` | `data/features/speech_features.npy` | 0 |
 
-The ACAV100M dataset (if available) provides ~2000 hours of general audio embeddings as additional negative examples.
+The negative speech features (if available) provide general audio spectrograms as additional negative examples, downloaded from microWakeWord's HuggingFace dataset.
 
 ## Default Training Configuration
 
@@ -237,51 +237,46 @@ The ACAV100M dataset (if available) provides ~2000 hours of general audio embedd
 | `target_fp_per_hour` | 0.2 |
 | `batch_n_per_class.positive` | 50 |
 | `batch_n_per_class.adversarial_negative` | 50 |
-| `batch_n_per_class.ACAV100M_sample` | 1024 |
+| `batch_n_per_class.negative_speech` | 1024 |
 
 ## Classifier Architectures
 
-Three classifier types are available, all sharing the same ONNX I/O contract: input `embeddings` (batch, 16, 96) → output `score` (batch, 1).
+Two classifier types are available, both taking input `(batch, 99, 40)` spectrogram features and producing `(batch, 1)` scores.
 
-### DNN (`model_type: dnn`)
+### Inception (`model_type: inception`)
 
-Flattens the 16×96 embedding sequence into a single 1536-dim vector, then passes it through fully-connected layers. Fast and simple, but has no architectural bias for temporal structure.
-
-```
-Flatten(16×96=1536) → Linear(1536, dim) → LayerNorm → ReLU
-→ N × FCNBlock(dim) → Linear(dim, 1) → Sigmoid
-```
-
-### RNN (`model_type: rnn`)
-
-Bi-directional LSTM that processes the 16 timesteps sequentially, capturing temporal dependencies. Uses the final hidden state for classification.
+CNN architecture with Sub-Spectral Normalization and Inception-style parallel branches, inspired by microWakeWord.
 
 ```
-Bi-LSTM(96→hidden, 2 layers) → Linear(hidden×2, 1) → Sigmoid
+Input (99, 40) → expand to (99, 40, 1)
+→ CNN1 blocks: Conv2D(5×5) + SubSpectralNorm + ReLU
+→ Inception blocks: 3 branches (1×1, dilated K×F, double K×F) → concat → 1×1 project
+→ GlobalAveragePool → Dropout → Dense(1, sigmoid)
 ```
 
-### Conv+Attention (`model_type: conv_attention`)
+Sub-Spectral Normalization splits the frequency axis into 5 sub-bands and applies BatchNorm independently to each, helping the model learn frequency-band-specific normalization.
 
-1D temporal convolutions capture local patterns across adjacent timesteps, followed by multi-head self-attention to model long-range temporal dependencies. Mean-pools over timesteps for the final prediction.
+### MixedNet (`model_type: mixednet`)
+
+MixConv architecture with multi-kernel depthwise convolutions and optional squeeze-and-excitation attention.
 
 ```
-Conv1D(96→dim, k=3) → LayerNorm → ReLU
-→ N × Conv1D(dim, k=3) → LayerNorm → ReLU
-→ MultiheadAttention(dim, heads) → LayerNorm (residual)
-→ MeanPool → Linear(dim, 1) → Sigmoid
+Input (99, 40) → expand to (99, 40, 1)
+→ Conv2D(3×3) + BatchNorm + ReLU
+→ MixConv blocks: split channels → different-kernel DW conv (3,5,7,9) → concat → 1×1 project
+→ Optional SE attention on later blocks
+→ GlobalAveragePool → Dropout → Dense(1, sigmoid)
 ```
-
-This head is best at distinguishing wake words from phonetically similar phrases because it explicitly models the temporal ordering of phoneme embeddings.
 
 ### Size Presets
 
-| Size | layer_dim | n_blocks |
-|------|-----------|----------|
-| tiny | 16 | 1 |
-| small | 32 | 1 |
-| medium | 128 | 2 |
-| large | 256 | 3 |
+| Size | filters | n_blocks |
+|------|---------|----------|
+| tiny | 8 | 2 |
+| small | 16 | 3 |
+| medium | 24 | 5 |
+| large | 32 | 7 |
 
 ## Output
 
-The trained model is saved to `output/<model_name>/<model_name>.pt`.
+The trained model weights are saved to `output/<model_name>/<model_name>.weights.h5`.

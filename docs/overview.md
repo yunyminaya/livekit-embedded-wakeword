@@ -1,22 +1,21 @@
 # Architecture Overview
 
-livekit-wakeword uses a hybrid ONNX + PyTorch architecture. Two frozen ONNX models handle feature extraction (mel spectrogram and speech embeddings), while a lightweight PyTorch classifier head is trained per wake word.
+livekit-wakeword uses a microWakeWord-inspired architecture. A pure-numpy log-mel spectrogram frontend feeds into TensorFlow/Keras CNN classifiers (Inception or MixedNet), which are exported to TFLite for lightweight streaming inference.
 
 ## System Architecture
 
-**Training Pipeline:** Synthetic speech is generated via VITS TTS with SLERP speaker blending, augmented with noise/reverb, then passed through frozen ONNX models (mel spectrogram → speech embedding) to produce `.npy` feature files. These features train a lightweight classifier head, which is saved as a `.pt` model.
+**Training Pipeline:** Synthetic speech is generated via VITS TTS with SLERP speaker blending, augmented with noise/reverb, then processed through a numpy-based spectrogram frontend to produce `.npy` feature files. These features train an Inception or MixedNet CNN classifier, which is saved as Keras weights (`.weights.h5`).
 
-**Inference Pipeline:** Raw 16kHz audio flows through the same frozen ONNX feature extractors (32-band mel spectrogram → 96-dim speech embedding), then through the trained classifier (exported to ONNX) to produce a detection score between 0 and 1.
+**Inference Pipeline:** Raw 16kHz audio flows through the same spectrogram frontend (40-channel log-mel, 30ms window, 20ms hop), then through the trained classifier (exported to TFLite) to produce a detection score between 0 and 1.
 
-## Why ONNX + PyTorch?
+## Why This Architecture?
 
-The mel-spectrogram and speech-embedding models are pre-trained and frozen — they never change between wake words. Running them through ONNX Runtime provides:
+- **Pure-numpy frontend** — no model files or runtime dependencies needed for feature extraction
+- **TFLite inference** — lightweight runtime (~2 MB), runs on embedded devices and microcontrollers
+- **Streaming support** — 30ms incremental processing via ring buffer of spectrogram frames
+- **Separated dependencies** — core inference needs only numpy + tflite-runtime; training needs tensorflow; data generation needs torch (for VITS TTS only)
 
-- **Fast numpy-based inference** without loading PyTorch at detection time
-- **Shared feature extractors** across all wake words
-- **Minimal training data** needed since only the small classifier head is trained
-
-The classifier head is trained in PyTorch for flexibility (focal loss, embedding mixup, learning rate schedules), then exported to ONNX for deployment.
+The CNN classifier is trained in TensorFlow/Keras for flexibility (focal loss, mixup, learning rate schedules), then exported to TFLite for deployment.
 
 ## Data Flow
 
@@ -25,29 +24,28 @@ The classifier head is trained in PyTorch for flexibility (focal loss, embedding
 | Stage | Output Shape | Description |
 |-------|-------------|-------------|
 | Raw audio | `(samples,)` | 16kHz float32 mono |
-| MelSpectrogramFrontend | `(batch, time_frames, 32)` | 32 mel bands, ~5 frames per 80ms |
-| SpeechEmbedding | `(batch, n_windows, 96)` | 76-frame sliding window, stride 8 |
-| Timestep selection | `(batch, 16, 96)` | Last 16 windows (or left-padded) |
+| MicroFrontend | `(batch, N_frames, 40)` | 40 log-mel channels, 30ms window, 20ms hop |
 | Classifier | `(batch, 1)` | Sigmoid confidence score |
 
-### Mel Spectrogram Parameters
+### Spectrogram Parameters
 
 | Parameter | Value |
 |-----------|-------|
-| Sample rate | 16000 Hz |
+| Sample rate | 16,000 Hz |
+| Window size | 480 samples (30ms) |
+| Hop length | 320 samples (20ms) |
 | FFT size | 512 |
-| Hop length | 160 (10ms) |
-| Window length | 400 (25ms) |
-| Mel bands | 32 |
-| Frequency range | 60–3800 Hz |
-| Centering | Disabled |
-| Normalization | `power_to_db / 10 + 2` |
+| Mel channels | 40 |
+| Frequency range | 125–7,500 Hz |
+| Compression | Log (with ε=1e-6) |
 
-### Speech Embedding Model
+### Frame Count
 
-Google's `speech_embedding` CNN (~330k parameters), originally from TensorFlow Hub. Input: `(batch, 76, 32, 1)` channels-last mel windows. Output: `(batch, 96)` embedding vectors.
+For a 2.0s clip (32,000 samples):
 
-The embedding model uses a 5-block CNN with separable convolutions (1x3 + 3x1), BatchNorm, LeakyReLU, and MaxPool.
+```
+N_frames = floor((32000 - 480) / 320) + 1 = 99 frames
+```
 
 ## Module Map
 
@@ -56,23 +54,23 @@ src/livekit/wakeword/
 ├── config.py                    Pydantic config models + YAML loading
 ├── cli.py                       Typer CLI (setup, generate, augment, train, export, eval, run)
 ├── models/
-│   ├── feature_extractor.py     MelSpectrogramFrontend + SpeechEmbedding (ONNX)
-│   ├── classifier.py            DNNClassifier, RNNClassifier, ConvAttentionClassifier
-│   └── pipeline.py              WakeWordClassifier (training wrapper for classifier head)
+│   ├── feature_extractor.py     MicroFrontend (pure numpy log-mel spectrogram)
+│   ├── classifier.py            InceptionClassifier, MixedNetClassifier, SubSpectralNorm
+│   └── pipeline.py              WakeWordClassifier (Keras training wrapper)
 ├── data/
 │   ├── generate.py              VITS TTS + SLERP speaker blending + adversarial negatives
-│   ├── augment.py               AudioAugmentor + clip alignment
-│   ├── dataset.py               WakeWordDataset (memory-mapped .npy batch generator)
-│   └── features.py              ONNX feature extraction → .npy files
+│   ├── augment.py               AudioAugmentor + clip alignment (audiomentations)
+│   ├── dataset.py               mmap_batch_generator + create_tf_dataset
+│   └── features.py              Spectrogram extraction → .npy files
 ├── training/
-│   ├── trainer.py               WakeWordTrainer (3-phase training + checkpoint averaging)
+│   ├── trainer.py               WakeWordTrainer (3-phase TF/Keras training + checkpoint averaging)
 │   └── metrics.py               FPPH, recall, balanced accuracy
 ├── eval/
 │   └── evaluate.py              DET curve, AUT, FPPH evaluation + plotting
 ├── export/
-│   └── onnx.py                  ONNX export + INT8 quantization
+│   └── tflite.py                TFLite export + INT8 quantization
 └── inference/
-    ├── model.py                 WakeWordModel class (simple prediction API)
+    ├── model.py                 WakeWordModel + StreamingWakeWordModel (TFLite)
     └── listener.py              WakeWordListener class (async microphone detection)
 ```
 
@@ -80,7 +78,7 @@ src/livekit/wakeword/
 
 1. **[Data Generation](data-generation.md)** — Synthesize positive clips via VITS TTS with SLERP speaker blending + adversarial negatives
 2. **[Augmentation](augmentation.md)** — Apply pitch shift, EQ, RIR convolution, background mixing; align clips to training windows
-3. **[Feature Extraction](feature-extraction.md)** — Extract mel spectrograms and speech embeddings through frozen ONNX models → `.npy` files
-4. **[Training](training.md)** — 3-phase adaptive training with focal loss, embedding mixup, and checkpoint averaging
-5. **[Export & Inference](export-and-inference.md)** — Export classifier to ONNX and run real-time streaming detection
+3. **[Feature Extraction](feature-extraction.md)** — Extract log-mel spectrograms through numpy frontend → `.npy` files
+4. **[Training](training.md)** — 3-phase adaptive training with focal loss, spectrogram mixup, and checkpoint averaging
+5. **[Export & Inference](export-and-inference.md)** — Export classifier to TFLite and run real-time streaming detection
 6. **[Evaluation](evaluation.md)** — DET curves, AUT, FPPH, and model comparison

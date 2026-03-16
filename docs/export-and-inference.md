@@ -1,40 +1,40 @@
 # Export & Inference
 
-The export stage converts the trained PyTorch classifier to ONNX for deployment. The inference API provides `WakeWordModel` for prediction and `WakeWordListener` for async microphone detection.
+The export stage converts the trained TensorFlow/Keras classifier to TFLite for deployment. The inference API provides `WakeWordModel` for stateless prediction, `StreamingWakeWordModel` for incremental processing, and `WakeWordListener` for async microphone detection.
 
-**Source:** `src/livekit/wakeword/export/onnx.py`, `src/livekit/wakeword/inference/model.py`, `src/livekit/wakeword/inference/listener.py`
+**Source:** `src/livekit/wakeword/export/tflite.py`, `src/livekit/wakeword/inference/model.py`, `src/livekit/wakeword/inference/listener.py`
 **CLI:** `livekit-wakeword export <config>`
 
-## ONNX Export
+## TFLite Export
 
 ### Classifier Export
 
-`export_classifier()` exports the trained PyTorch classifier head to ONNX format.
+`export_classifier()` converts the trained Keras classifier to TFLite format using `tf.lite.TFLiteConverter`.
 
 | Property | Value |
 |----------|-------|
-| Input name | `embeddings` |
-| Input shape | `(1, 16, 96)` with dynamic batch axis |
-| Output name | `score` |
-| Output shape | `(1, 1)` with dynamic batch axis |
-| Opset version | 18 |
+| Input shape | `(1, 99, 40)` — spectrogram features |
+| Output shape | `(1, 1)` — confidence score |
+| Format | FlatBuffers (`.tflite`) |
+
+The converter creates a concrete function with a fixed input shape for optimal TFLite compatibility.
 
 ### INT8 Quantization
 
-`quantize_onnx()` applies dynamic INT8 quantization using `onnxruntime.quantization`:
+`quantize_tflite()` applies dynamic range INT8 quantization using `tf.lite.Optimize.DEFAULT`:
 
-- Weight type: `QuantType.QInt8`
-- Output filename: `<model_name>.int8.onnx`
+- Output filename: `<model_name>_int8.tflite`
+- Typical size reduction: 2-4x smaller than float32
 
 Enable via the `--quantize` flag:
 
 ```bash
-livekit-wakeword export configs/hey_jarvis.yaml --quantize
+livekit-wakeword export configs/hey_livekit.yaml --quantize
 ```
 
 ### Export Entry Point
 
-`run_export()` loads the trained model from `output/<model_name>/<model_name>.pt`, exports it to ONNX, and optionally quantizes it. Raises `FileNotFoundError` if the trained model doesn't exist.
+`run_export()` loads the trained model from `output/<model_name>/<model_name>.weights.h5`, exports it to TFLite, and optionally quantizes it. Raises `FileNotFoundError` if the trained model doesn't exist.
 
 ## Inference API
 
@@ -47,7 +47,7 @@ The `WakeWordModel` class is a stateless prediction API for wake word detection.
 ```python
 from livekit.wakeword import WakeWordModel
 
-model = WakeWordModel(models=["hey_livekit.onnx"])
+model = WakeWordModel(models=["hey_livekit.tflite"])
 
 # Pass ~2 seconds of 16kHz audio
 scores = model.predict(audio_chunk)
@@ -58,11 +58,11 @@ scores = model.predict(audio_chunk)
 
 ```python
 WakeWordModel(
-    models: list[str | Path] | None = None,  # Paths to ONNX classifiers
+    models: list[str | Path] | None = None,  # Paths to TFLite classifiers
 )
 ```
 
-Feature extraction models (`melspectrogram.onnx`, `embedding_model.onnx`) are bundled with the package and loaded automatically.
+The `MicroFrontend` spectrogram extractor is created automatically — no external model files are needed for feature extraction.
 
 #### Methods
 
@@ -74,8 +74,40 @@ Feature extraction models (`melspectrogram.onnx`, `embedding_model.onnx`) are bu
 #### Audio Input
 
 - **Format:** 16kHz mono, int16 or float32
-- **Chunk size:** ~2 seconds (32,000 samples) recommended — yields 16 embeddings for the classifier
+- **Chunk size:** ~2 seconds (32,000 samples) recommended — yields 99 spectrogram frames
 - **Stateless:** No internal audio buffering; the caller manages the audio window
+
+### StreamingWakeWordModel
+
+The `StreamingWakeWordModel` class processes audio incrementally, maintaining a ring buffer of spectrogram frames.
+
+```python
+from livekit.wakeword.inference.model import StreamingWakeWordModel
+
+model = StreamingWakeWordModel("hey_livekit.tflite")
+
+# Process audio in small chunks (e.g., 30ms = 480 samples)
+while True:
+    audio_chunk = get_audio(480)  # 30ms at 16kHz
+    score = model.predict_streaming(audio_chunk)
+    if score is not None and score > 0.5:
+        print("Wake word detected!")
+```
+
+#### How Streaming Works
+
+1. New audio is accumulated in an internal buffer
+2. When enough samples for a window (480 samples = 30ms) are available, a new spectrogram frame is computed
+3. The frame is added to a ring buffer (capacity = 99 frames)
+4. Once the ring buffer is full, the entire spectrogram is fed to the TFLite classifier
+5. Returns a confidence score, or `None` if not enough frames yet
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `predict_streaming(audio)` | `float \| None` | Score if enough frames, else None |
+| `reset()` | `None` | Clear all internal state |
 
 ### WakeWordListener
 
@@ -85,7 +117,7 @@ The `WakeWordListener` class provides async microphone detection with debouncing
 import asyncio
 from livekit.wakeword import WakeWordModel, WakeWordListener
 
-model = WakeWordModel(models=["hey_livekit.onnx"])
+model = WakeWordModel(models=["hey_livekit.tflite"])
 
 async def main():
     async with WakeWordListener(model, threshold=0.5, debounce=2.0) as listener:
@@ -129,4 +161,12 @@ Uses PyAudio to capture from the default microphone:
 | Format | int16 (paInt16) |
 | Channels | 1 (mono) |
 | Sample rate | 16,000 Hz |
-| Buffer size | 1,280 samples (80ms) |
+| Buffer size | 480 samples (30ms) |
+
+### TFLite Runtime
+
+The inference code supports three TFLite backends, tried in order:
+
+1. `tflite-runtime` — lightweight standalone interpreter
+2. `ai-edge-litert` — Google's edge runtime (used on macOS ARM)
+3. `tensorflow.lite` — full TensorFlow package (fallback)

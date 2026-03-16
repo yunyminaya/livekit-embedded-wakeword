@@ -11,7 +11,7 @@ The augmentation stage applies realistic audio transformations to synthetic TTS 
 Generated .wav clips
     │
     ├──► Per-sample augmentations (audiomentations)
-    │    EQ, distortion
+    │    Pitch shift, EQ, colored noise, gain, distortion
     │
     ├──► RIR convolution
     │    Room impulse responses
@@ -26,7 +26,7 @@ Generated .wav clips
 
 ## AudioAugmentor
 
-The `AudioAugmentor` class manages all audio augmentations.
+The `AudioAugmentor` class manages all audio augmentations. All augmentations are per-sample using the `audiomentations` library (no GPU or torch dependency).
 
 ### Initialization
 
@@ -46,6 +46,10 @@ Applied via the `audiomentations` library to individual clips:
 
 | Transform | Probability | Description |
 |-----------|------------|-------------|
+| `PitchShift` | 0.25 | Shift pitch ±3 semitones |
+| `BandStopFilter` | 0.25 | Random band-stop filter |
+| `AddColoredNoise` | 0.25 | Add colored noise |
+| `Gain` | 0.50 | Random gain ±6 dB |
 | `SevenBandParametricEQ` | 0.25 | 7-band parametric equalizer |
 | `TanhDistortion` | 0.25 | Tanh-based distortion |
 
@@ -55,7 +59,7 @@ Applied via the `audiomentations` library to individual clips:
 
 ### Background Mixing
 
-`mix_with_background(audio, snr_db_range=(5.0, 15.0))` mixes audio with a random background noise clip at a randomly selected SNR within the given range. The batch augmentations use an SNR range of **0–15 dB** for `AddBackgroundNoise` (signal is always at least as loud as the noise).
+`mix_with_background(audio, snr_db_range=(5.0, 15.0))` mixes audio with a random background noise clip at a randomly selected SNR within the given range.
 
 The background clip is looped (tiled) if shorter than the audio and randomly cropped to a starting position. The mixing formula scales the background based on:
 
@@ -94,7 +98,7 @@ Only original clips (`clip_######.wav`) are read as input — augmented variants
 For each WAV file in a directory:
 
 1. Read audio, convert to float32, take first channel if stereo
-2. Apply per-sample augmentations (EQ, distortion)
+2. Apply per-sample augmentations (pitch, EQ, noise, gain, distortion)
 3. Apply RIR convolution (50% probability)
 4. Mix with background noise
 5. Align to window (end-aligned for positives, center-padded for negatives)

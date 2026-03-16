@@ -1,6 +1,6 @@
 # Evaluation
 
-The evaluation stage runs the exported ONNX model against held-out validation data and produces a DET (Detection Error Tradeoff) curve, AUT score, and summary metrics.
+The evaluation stage runs the exported TFLite model against held-out validation data and produces a DET (Detection Error Tradeoff) curve, AUT score, and summary metrics.
 
 **Source:** `src/livekit/wakeword/eval/evaluate.py`
 **CLI:** `livekit-wakeword eval <config>` or as step 6/6 of `livekit-wakeword run`
@@ -8,7 +8,7 @@ The evaluation stage runs the exported ONNX model against held-out validation da
 ## Overview
 
 ```
-ONNX model (.onnx) + validation features (.npy)
+TFLite model (.tflite) + validation features (.npy)
     │
     ▼
 Run inference on positive & negative samples
@@ -34,13 +34,13 @@ Save DET plot (.png) + metrics (.json)
 uv run livekit-wakeword eval configs/hey_livekit.yaml
 ```
 
-**Evaluate a specific ONNX model** (e.g., from a different training run or an openWakeWord model):
+**Evaluate a specific TFLite model** (e.g., from a different training run):
 
 ```bash
-uv run livekit-wakeword eval configs/hey_livekit.yaml -m /path/to/model.onnx
+uv run livekit-wakeword eval configs/hey_livekit.yaml -m /path/to/model.tflite
 ```
 
-If `--model` is not specified, the default path `output/<model_name>/<model_name>.onnx` is used.
+If `--model` is not specified, the default path `output/<model_name>/<model_name>.tflite` is used.
 
 ## Python API
 
@@ -50,7 +50,7 @@ from livekit.wakeword import load_config
 from livekit.wakeword.eval.evaluate import run_eval
 
 config = load_config("configs/hey_livekit.yaml")
-model_path = Path("output/hey_livekit/hey_livekit.onnx")
+model_path = Path("output/hey_livekit/hey_livekit.tflite")
 
 results = run_eval(config, model_path)
 # results = {
@@ -109,15 +109,13 @@ The evaluation uses `find_best_threshold()` to scan thresholds from 0.01 to 0.99
 |--------|------|------|
 | Positive test clips | `output/<model>/positive_features_test.npy` | Wake word samples (generated + augmented) |
 | Negative test clips | `output/<model>/negative_features_test.npy` | Adversarial negatives (phonetically similar) |
-| General negatives | `data/features/validation_set_features.npy` | ~11 hrs of ACAV100M speech (downloaded via `setup`) |
+| General negatives | `data/features/validation_features.npy` | Precomputed spectrogram features (downloaded via `setup`) |
 
-All feature arrays have shape `(N, 16, 96)` — N clips × 16 embedding timesteps × 96-dim speech embeddings.
-
-The general negative validation set (`validation_set_features.npy`) is stored as 2D `(N, 96)` and reshaped to 3D during loading. Samples not divisible by 16 are dropped with a warning.
+All feature arrays have shape `(N, 99, 40)` — N clips × 99 spectrogram frames × 40 mel channels.
 
 ### Requirements
 
-Evaluation requires that the data generation, augmentation, and feature extraction stages have been run first (to produce the `*_features_test.npy` files). The ACAV100M validation features are optional but recommended — without them, FPPH estimates are based only on adversarial negatives.
+Evaluation requires that the data generation, augmentation, and feature extraction stages have been run first (to produce the `*_features_test.npy` files). The general negative validation features are optional but recommended — without them, FPPH estimates are based only on adversarial negatives.
 
 ## Output Files
 
@@ -143,14 +141,12 @@ Example `_eval.json`:
 
 ## Comparing Models
 
-The eval command accepts any ONNX model that takes `(1, 16, 96)` input and produces a `(1, 1)` score, making it useful for comparing models trained with different configurations or frameworks:
+The eval command accepts any TFLite model that takes `(1, 99, 40)` input and produces a `(1, 1)` score, making it useful for comparing models trained with different configurations:
 
 ```bash
-# Evaluate a livekit-wakeword model
-uv run livekit-wakeword eval configs/hey_livekit.yaml -m models/conv_attention_medium.onnx
+# Evaluate an inception model
+uv run livekit-wakeword eval configs/hey_livekit.yaml -m models/inception_medium.tflite
 
-# Evaluate an openWakeWord model against the same validation set
-uv run livekit-wakeword eval configs/hey_livekit.yaml -m models/hey_livekit_oww.onnx
+# Evaluate a mixednet model against the same validation set
+uv run livekit-wakeword eval configs/hey_livekit.yaml -m models/mixednet_small.tflite
 ```
-
-This works because both livekit-wakeword and openWakeWord share the same frozen embedding front-end, producing identical `(16, 96)` feature matrices.
