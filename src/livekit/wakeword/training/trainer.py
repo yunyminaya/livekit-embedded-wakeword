@@ -260,6 +260,9 @@ class WakeWordTrainer:
             learning_rate=base_lr,
             weight_decay=self.config.weight_decay,
         )
+        # Pre-build optimizer variables so tf.function doesn't hit
+        # "singleton tf.Variables created on the first call" error
+        optimizer.build(self.model.trainable_variables)
         label_smoothing_val = self.config.label_smoothing
         label_smoothing_t = tf.constant(label_smoothing_val, dtype=tf.float32)
 
