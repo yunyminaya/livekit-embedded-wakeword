@@ -401,107 +401,174 @@ def _fuse_conv_bn(
     return kernel_fused, bias_fused
 
 
-class RepBlock(tf.keras.layers.Layer):  # type: ignore[misc]
-    """Re-parameterizable block: multi-branch during training, single conv at deploy.
+def _fuse_dw_conv_bn(
+    dw_conv: tf.keras.layers.DepthwiseConv2D,
+    bn: tf.keras.layers.BatchNormalization,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fuse DepthwiseConv2D (no bias, depth_multiplier=1) + BatchNormalization.
 
-    Training branches:
-      A: Conv2D(3x3) + BatchNorm
-      B: Conv2D(1x1) + BatchNorm
-      C: BatchNorm only (identity shortcut, when in_channels == filters)
+    For depthwise conv the kernel shape is (H, W, C_in, 1) and BN scale
+    is applied along the channel-in axis (axis 2).
 
-    Output: ReLU(A + B + C)
+    Returns:
+        (kernel_fused, bias_fused) numpy arrays.
+    """
+    kernel = dw_conv.kernel.numpy()  # (H, W, C, 1)
+    gamma = bn.gamma.numpy()
+    beta = bn.beta.numpy()
+    mean = bn.moving_mean.numpy()
+    var = bn.moving_variance.numpy()
+    eps = bn.epsilon
 
-    At export time, all branches fuse into a single 3x3 Conv2D + bias.
+    scale = gamma / np.sqrt(var + eps)
+    kernel_fused = kernel * scale[np.newaxis, np.newaxis, :, np.newaxis]
+    bias_fused = -mean * scale + beta
+    return kernel_fused, bias_fused
+
+
+def _bn_to_scale_bias(
+    bn: tf.keras.layers.BatchNormalization,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract fused scale + bias from a standalone BatchNormalization (identity branch)."""
+    gamma = bn.gamma.numpy()
+    beta = bn.beta.numpy()
+    mean = bn.moving_mean.numpy()
+    var = bn.moving_variance.numpy()
+    eps = bn.epsilon
+    scale = gamma / np.sqrt(var + eps)
+    bias = -mean * scale + beta
+    return scale, bias
+
+
+class RepDSBlock(tf.keras.layers.Layer):  # type: ignore[misc]
+    """RepVGG-style depthwise-separable block with temporal dilation.
+
+    Training-time multi-branch depthwise convolution:
+      A: DepthwiseConv2D(3x3, dilation=(d,1)) + BN
+      B: DepthwiseConv2D(1x1) + BN
+      C: BN only (identity shortcut)
+    Summed → ReLU → Pointwise Conv2D(1x1) + BN → ReLU
+
+    Residual: input added to output when channel counts match.
+
+    At export, the depthwise branches fuse into a single dilated DW-Conv + bias,
+    and the pointwise conv+BN fuses into a single PW-Conv + bias. No BN remains.
+    ESP32-S3 SIMD handles the fused DW+PW conv pair efficiently.
     """
 
-    def __init__(self, filters: int, **kwargs: object):
+    def __init__(self, filters: int, dilation: int = 1, **kwargs: object):
         super().__init__(**kwargs)
         self._filters = filters
+        self._dilation = dilation
 
     def build(self, input_shape: tf.TensorShape) -> None:
-        f = self._filters
         in_channels = int(input_shape[-1])
+        d = self._dilation
 
-        # Branch A: 3x3
-        self.conv3x3 = tf.keras.layers.Conv2D(
-            f, (3, 3), padding="same", use_bias=False, name="rep_conv3x3"
+        # DW Branch A: 3x3 dilated (temporal dilation only)
+        self.dw_conv3x3 = tf.keras.layers.DepthwiseConv2D(
+            (3, 3),
+            dilation_rate=(d, 1),
+            padding="same",
+            use_bias=False,
+            depth_multiplier=1,
+            name="dw_conv3x3",
         )
-        self.bn3x3 = tf.keras.layers.BatchNormalization(name="rep_bn3x3")
+        self.dw_bn3x3 = tf.keras.layers.BatchNormalization(name="dw_bn3x3")
 
-        # Branch B: 1x1
-        self.conv1x1 = tf.keras.layers.Conv2D(
-            f, (1, 1), padding="same", use_bias=False, name="rep_conv1x1"
+        # DW Branch B: 1x1
+        self.dw_conv1x1 = tf.keras.layers.DepthwiseConv2D(
+            (1, 1),
+            padding="same",
+            use_bias=False,
+            depth_multiplier=1,
+            name="dw_conv1x1",
         )
-        self.bn1x1 = tf.keras.layers.BatchNormalization(name="rep_bn1x1")
+        self.dw_bn1x1 = tf.keras.layers.BatchNormalization(name="dw_bn1x1")
 
-        # Branch C: identity (only when channels match)
-        self._has_identity = in_channels == f
-        if self._has_identity:
-            self.bn_identity = tf.keras.layers.BatchNormalization(name="rep_bn_id")
+        # DW Branch C: identity (always valid for depthwise since channels unchanged)
+        self.dw_bn_id = tf.keras.layers.BatchNormalization(name="dw_bn_id")
 
-        self.relu = tf.keras.layers.ReLU()
+        self.dw_relu = tf.keras.layers.ReLU(name="dw_relu")
+
+        # Pointwise: channel mixing
+        self.pw_conv = tf.keras.layers.Conv2D(
+            self._filters, (1, 1), padding="same", use_bias=False, name="pw_conv"
+        )
+        self.pw_bn = tf.keras.layers.BatchNormalization(name="pw_bn")
+        self.pw_relu = tf.keras.layers.ReLU(name="pw_relu")
+
+        # Residual when input channels == output filters
+        self._has_residual = in_channels == self._filters
+
         super().build(input_shape)
 
     def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
-        a = self.bn3x3(self.conv3x3(x), training=training)
-        b = self.bn1x1(self.conv1x1(x), training=training)
-        out = a + b
-        if self._has_identity:
-            out = out + self.bn_identity(x, training=training)
-        return self.relu(out)
+        # Multi-branch depthwise
+        a = self.dw_bn3x3(self.dw_conv3x3(x), training=training)
+        b = self.dw_bn1x1(self.dw_conv1x1(x), training=training)
+        c = self.dw_bn_id(x, training=training)
+        dw_out = self.dw_relu(a + b + c)
 
-    def fuse(self) -> tuple[np.ndarray, np.ndarray]:
-        """Fuse all branches into a single 3x3 kernel + bias."""
-        # Branch A: already 3x3
-        k3, b3 = _fuse_conv_bn(self.conv3x3, self.bn3x3)
+        # Pointwise
+        pw_out = self.pw_relu(self.pw_bn(self.pw_conv(dw_out), training=training))
 
-        # Branch B: 1x1 → pad to 3x3
-        k1, b1 = _fuse_conv_bn(self.conv1x1, self.bn1x1)
+        # Residual
+        if self._has_residual:
+            return pw_out + x
+        return pw_out
+
+    def fuse(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Fuse all branches into (dw_kernel, dw_bias, pw_kernel, pw_bias).
+
+        The depthwise 3x3 dilated + 1x1 + identity branches merge into one
+        3x3 depthwise kernel (applied with the original dilation at runtime).
+        The pointwise conv+BN merges into a single 1x1 conv + bias.
+        """
+        # Branch A: 3x3 depthwise (already correct shape)
+        k3, b3 = _fuse_dw_conv_bn(self.dw_conv3x3, self.dw_bn3x3)  # (3, 3, C, 1)
+
+        # Branch B: 1x1 depthwise → pad to 3x3
+        k1, b1 = _fuse_dw_conv_bn(self.dw_conv1x1, self.dw_bn1x1)  # (1, 1, C, 1)
         k1_padded = np.zeros_like(k3)
         k1_padded[1:2, 1:2, :, :] = k1
 
-        k_total = k3 + k1_padded
-        b_total = b3 + b1
+        # Branch C: identity BN → depthwise delta kernel at center
+        scale_id, b_id = _bn_to_scale_bias(self.dw_bn_id)
+        k_id = np.zeros_like(k3)
+        k_id[1, 1, :, 0] = scale_id
 
-        # Branch C: identity
-        if self._has_identity:
-            in_channels = int(k3.shape[2])
-            bn = self.bn_identity
-            gamma = bn.gamma.numpy()
-            beta = bn.beta.numpy()
-            mean = bn.moving_mean.numpy()
-            var = bn.moving_variance.numpy()
-            eps = bn.epsilon
-            scale = gamma / np.sqrt(var + eps)
+        dw_k = k3 + k1_padded + k_id
+        dw_b = b3 + b1 + b_id
 
-            k_id = np.zeros_like(k3)
-            for c in range(in_channels):
-                k_id[1, 1, c, c] = scale[c]
-            b_id = -mean * scale + beta
+        # Pointwise conv + BN
+        pw_k, pw_b = _fuse_conv_bn(self.pw_conv, self.pw_bn)
 
-            k_total = k_total + k_id
-            b_total = b_total + b_id
-
-        return k_total, b_total
+        return dw_k, dw_b, pw_k, pw_b
 
     def get_config(self) -> dict[str, object]:
         config = super().get_config()
         config["filters"] = self._filters
+        config["dilation"] = self._dilation
         return config
 
 
 class RepCNNClassifier(tf.keras.Model):  # type: ignore[misc]
-    """RepCNN wake word classifier with structural re-parameterization.
+    """RepVGG-style depthwise-separable wake word classifier.
 
-    Training: multi-branch RepBlocks (3x3 + 1x1 + identity).
-    Deploy: fused single-conv blocks via reparameterize_model().
+    Training: multi-branch DW convs (3x3 dilated + 1x1 + identity) + pointwise.
+    Deploy: fused DW-Conv + PW-Conv per block via reparameterize_model().
+
+    Temporal dilations cycle [1, 2, 4] across blocks for multi-scale context.
 
     Architecture:
         Input (N_frames, N_features) → expand_dims → (N_frames, N_features, 1)
-        → Conv2D(filters, 3x3) + BN + ReLU (channel expansion)
-        → N × RepBlock(filters)
+        → Conv2D(filters, 3x3) + BN + ReLU  (channel expansion)
+        → N × RepDSBlock(filters, dilation=cycling)
         → GlobalAveragePooling2D → Dropout → Dense(1, sigmoid)
     """
+
+    DILATION_CYCLE: tuple[int, ...] = (1, 2, 4)
 
     def __init__(
         self,
@@ -517,17 +584,18 @@ class RepCNNClassifier(tf.keras.Model):  # type: ignore[misc]
         self.n_features = n_features
         self._filters = filters
 
-        # Initial conv to expand channels
+        # Initial conv to expand channels (1 → filters)
         self.init_conv = tf.keras.layers.Conv2D(
             filters, (3, 3), padding="same", use_bias=False, name="init_conv"
         )
         self.init_bn = tf.keras.layers.BatchNormalization(name="init_bn")
         self.init_relu = tf.keras.layers.ReLU(name="init_relu")
 
-        # RepBlocks
-        self.rep_blocks: list[RepBlock] = []
+        # RepDS blocks with cycling temporal dilation
+        self.rep_blocks: list[RepDSBlock] = []
         for i in range(n_blocks):
-            self.rep_blocks.append(RepBlock(filters=filters, name=f"repblock_{i}"))
+            d = self.DILATION_CYCLE[i % len(self.DILATION_CYCLE)]
+            self.rep_blocks.append(RepDSBlock(filters=filters, dilation=d, name=f"repdsblock_{i}"))
 
         # Classification head
         self.global_pool = tf.keras.layers.GlobalAveragePooling2D()
@@ -556,10 +624,11 @@ class RepCNNClassifier(tf.keras.Model):  # type: ignore[misc]
 
 
 def reparameterize_model(rep_model: RepCNNClassifier) -> tf.keras.Model:
-    """Fuse RepCNN multi-branch blocks into plain Conv2D layers.
+    """Fuse RepCNN multi-branch blocks into plain DW-Conv + PW-Conv layers.
 
     Creates a functional Keras model with no BatchNormalization layers,
-    suitable for TFLite export and quantization.
+    suitable for TFLite export and quantization. Each RepDSBlock becomes
+    a single dilated DepthwiseConv2D + Conv2D(1x1) pair.
 
     Args:
         rep_model: A built RepCNNClassifier (must have been called at least once).
@@ -578,20 +647,36 @@ def reparameterize_model(rep_model: RepCNNClassifier) -> tf.keras.Model:
     init_conv = tf.keras.layers.Conv2D(
         k_init.shape[-1], (3, 3), padding="same", name="fused_init_conv"
     )
-    # Build the layer first, then set weights
     x = init_conv(x)
     init_conv.set_weights([k_init, b_init])
     x = tf.keras.layers.ReLU()(x)
 
-    # Fuse each RepBlock
+    # Fuse each RepDSBlock → DW-Conv + PW-Conv
     for i, block in enumerate(rep_model.rep_blocks):
-        k, b = block.fuse()
-        conv = tf.keras.layers.Conv2D(
-            k.shape[-1], (3, 3), padding="same", name=f"fused_repblock_{i}"
+        dw_k, dw_b, pw_k, pw_b = block.fuse()
+        residual = x
+
+        # Fused dilated depthwise conv
+        dw = tf.keras.layers.DepthwiseConv2D(
+            (3, 3),
+            dilation_rate=(block._dilation, 1),
+            padding="same",
+            depth_multiplier=1,
+            name=f"fused_dw_{i}",
         )
-        x = conv(x)
-        conv.set_weights([k, b])
+        x = dw(x)
+        dw.set_weights([dw_k, dw_b])
         x = tf.keras.layers.ReLU()(x)
+
+        # Fused pointwise conv
+        pw = tf.keras.layers.Conv2D(pw_k.shape[-1], (1, 1), padding="same", name=f"fused_pw_{i}")
+        x = pw(x)
+        pw.set_weights([pw_k, pw_b])
+        x = tf.keras.layers.ReLU()(x)
+
+        # Residual
+        if block._has_residual:
+            x = x + residual
 
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     dense = tf.keras.layers.Dense(1, activation="sigmoid", name="fused_dense")

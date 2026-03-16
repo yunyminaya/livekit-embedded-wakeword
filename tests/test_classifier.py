@@ -61,7 +61,7 @@ class TestRepCNNClassifier:
         assert out.shape == (4, 1)
 
 
-class TestRepBlockFusion:
+class TestRepDSBlockFusion:
     def test_fuse_matches_forward(self, sample_spectrogram: np.ndarray):
         """Critical: fused model must produce identical output to multi-branch model."""
         model = RepCNNClassifier(n_frames=99, n_features=40, filters=8, n_blocks=3)
@@ -86,6 +86,19 @@ class TestRepBlockFusion:
         fused = reparameterize_model(model)
         for layer in fused.layers:
             assert not isinstance(layer, tf.keras.layers.BatchNormalization)
+
+    def test_dilation_cycling(self):
+        model = RepCNNClassifier(n_frames=99, n_features=40, filters=8, n_blocks=6)
+        dilations = [b._dilation for b in model.rep_blocks]
+        assert dilations == [1, 2, 4, 1, 2, 4]
+
+    def test_fused_has_depthwise_and_pointwise(self, sample_spectrogram: np.ndarray):
+        """Fused model should have DepthwiseConv2D + Conv2D pairs, not plain Conv2D."""
+        model = RepCNNClassifier(n_frames=99, n_features=40, filters=8, n_blocks=2)
+        model(sample_spectrogram, training=False)
+        fused = reparameterize_model(model)
+        dw_layers = [ly for ly in fused.layers if isinstance(ly, tf.keras.layers.DepthwiseConv2D)]
+        assert len(dw_layers) == 2  # one per block
 
 
 class TestBuildClassifier:
