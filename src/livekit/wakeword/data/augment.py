@@ -44,7 +44,7 @@ class AudioAugmentor:
         """Lazy-load audiomentations transforms (all per-sample)."""
         if self._augmentation_chain is None:
             from audiomentations import (
-                AddColoredNoise,
+                AddColorNoise,
                 BandStopFilter,
                 Compose,
                 Gain,
@@ -60,7 +60,7 @@ class AudioAugmentor:
                     p=0.25,
                 ),
                 BandStopFilter(p=0.25),
-                AddColoredNoise(p=0.25),
+                AddColorNoise(p=0.25),
                 Gain(
                     min_gain_db=-6.0,
                     max_gain_db=6.0,
