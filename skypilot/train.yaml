@@ -47,5 +47,5 @@ envs:
   WORKSPACE: livekit-embedded-wakeword
   CONFIG_FILE: prod.yaml
   MODEL_NAME: hey_livekit
-  DATA_DIR: ~/persistent/data
-  OUTPUT_DIR: ~/persistent/output
+  DATA_DIR: /home/ubuntu/persistent/data
+  OUTPUT_DIR: /home/ubuntu/persistent/output
