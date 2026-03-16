@@ -1,10 +1,15 @@
-"""Tests for data generation resume support."""
+"""Tests for data generation resume support.
+
+Requires torch (datagen extra) since generate.py uses VITS TTS.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+
+torch = pytest.importorskip("torch", reason="torch required for data generation tests")
 
 from livekit.wakeword.data.generate import _count_original_clips, synthesize_clips
 
