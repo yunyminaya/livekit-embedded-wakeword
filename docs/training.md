@@ -8,7 +8,7 @@ The training stage uses a 3-phase adaptive approach with focal loss, spectrogram
 ## Overview
 
 ```
-.npy features (N, 99, 40)
+.npy features (N, 99, 40) — scaled float32, ~0–26 range
     │
     ▼
 Phase 1: Full Training
@@ -223,7 +223,7 @@ The dataset loads features from:
 | `adversarial_negative` | `negative_features_train.npy` | 0 |
 | `negative_speech` | `data/features/speech_features.npy` | 0 |
 
-The negative speech features (if available) provide general audio spectrograms as additional negative examples, downloaded from microWakeWord's HuggingFace dataset.
+The negative speech features (if available) provide general audio spectrograms as additional negative examples, downloaded from the `binhpham/livekit_embedded_wakeword_features` HuggingFace dataset via `livekit-wakeword setup`. Raw uint16 values from the dataset are scaled by `× 0.0390625` to float32 during conversion (see [Feature Extraction — Scaling Convention](feature-extraction.md#feature-scaling-convention-uint16--float32)).
 
 ## Default Training Configuration
 

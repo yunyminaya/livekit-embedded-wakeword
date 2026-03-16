@@ -78,7 +78,7 @@ Raw audio (16kHz) → MicroFrontend (pymicro-features) → Classifier (Keras) �
 ### Key Design Decisions
 
 - **Feature extraction uses the TFLite Micro microfrontend** C library (via `pymicro-features`), identical to the on-device ESPHome implementation. Fallback: TensorFlow `audio_microfrontend` op.
-- **Spectrogram shape**: `(batch, 99, 40)` for 2.0s clips — 99 frames (30ms window, 20ms hop) × 40 mel channels.
+- **Spectrogram shape**: `(batch, 99, 40)` for 2.0s clips — 99 frames (30ms window, 20ms hop) × 40 filterbank channels. Features are scaled float32 (~0–26 range) via `uint16 × 0.0390625`.
 - **Model sizes** (tiny/small/medium/large) map to `(filters, n_blocks)` in config. Factory: `build_classifier(model_type, model_size, n_frames, n_features)`.
 - **Training loss**: Focal loss (gamma=2.0) with linearly increasing negative class weight + mixup + label smoothing.
 - **Checkpoint averaging**: final model averages top checkpoints by 90th-pct accuracy and 10th-pct FPPH.

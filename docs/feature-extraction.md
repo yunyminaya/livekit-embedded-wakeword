@@ -55,7 +55,7 @@ The microfrontend is a lightweight signal processing pipeline (not a neural netw
 
 6. **Log Scaling**: Logarithmic compression with shift=6.
 
-7. **Output Scaling**: uint16 values are scaled to float32 by multiplying by 0.0390625 (= 1/25.6).
+7. **Output Scaling**: The C library produces uint16 values (range ~0–660). These are scaled to float32 by multiplying by `0.0390625` (= 1/25.6), giving a final range of ~0–26.
 
 ### Parameters
 
@@ -109,6 +109,20 @@ Using the exact same microfrontend C library for both training and inference ens
 1. **Exact match with precomputed features** — the HuggingFace `binhpham/livekit_embedded_wakeword_features` dataset was generated with this same library
 2. **Exact match with on-device inference** — ESPHome's `micro_wake_word` component uses the same C code
 3. **No mismatch risk** — a numpy reimplementation would produce different values due to the noise reduction, PCAN, and log scaling specifics
+
+### Feature Scaling Convention (uint16 → float32)
+
+The microfrontend C library internally produces **uint16** values (range ~0–660). All feature paths in this project apply the `× 0.0390625` scaling factor to convert to **float32** (range ~0–26), following the convention specified in the [precomputed features dataset](https://huggingface.co/datasets/binhpham/livekit_embedded_wakeword_features):
+
+> *"These features are not scaled or converted to float. To do so, multiply by a factor of 0.0390625 after casting to a float."*
+
+| Feature Source | Raw Output | Scaling Applied |
+|---|---|---|
+| **pymicro-features** (C extension) | float32, already scaled (~0–26) | None needed |
+| **TF `audio_microfrontend`** op | uint16 (~0–660) | `× 0.0390625` after cast to float32 |
+| **HuggingFace precomputed dataset** | uint16 (~0–660) in RaggedMmap | `× 0.0390625` during `_convert_ragged_to_npy` |
+
+This ensures that all features — whether extracted live from audio or loaded from the precomputed dataset — are in the same consistent ~0–26 float32 range.
 
 ## Frame Selection
 

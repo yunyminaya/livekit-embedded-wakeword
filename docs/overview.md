@@ -39,7 +39,7 @@ The CNN classifier is trained in TensorFlow/Keras for flexibility (focal loss, m
 | Frequency range | 125–7,500 Hz |
 | PCAN | Enabled (strength=0.95) |
 | Log scale | shift=6 |
-| Output scaling | uint16 × 0.0390625 → float32 |
+| Output scaling | uint16 (0–660) × 0.0390625 → float32 (0–26) |
 
 ### Frame Count
 
