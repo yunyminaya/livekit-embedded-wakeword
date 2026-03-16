@@ -7,6 +7,7 @@ Output: (batch, 1) confidence score in [0, 1].
 
 from __future__ import annotations
 
+import numpy as np
 import tensorflow as tf
 
 from ..config import MODEL_SIZE_PRESETS, ModelSize, ModelType
@@ -31,15 +32,10 @@ class SubSpectralNormalization(tf.keras.layers.Layer):  # type: ignore[misc]
         ]
         super().build(input_shape)
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         # x: (batch, time, freq, channels)
         sub_bands = tf.split(x, self.num_sub_bands, axis=2)
-        normalized = [
-            bn(sb, training=training)
-            for bn, sb in zip(self._batch_norms, sub_bands)
-        ]
+        normalized = [bn(sb, training=training) for bn, sb in zip(self._batch_norms, sub_bands)]
         return tf.concat(normalized, axis=2)
 
     def get_config(self) -> dict[str, object]:
@@ -101,9 +97,7 @@ class InceptionBlock(tf.keras.layers.Layer):  # type: ignore[misc]
 
         super().build(input_shape)
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         b1 = self.branch1_conv(x)
         b2 = self.branch2_conv(x)
         b3 = self.branch3_conv2(self.branch3_conv1(x))
@@ -119,12 +113,14 @@ class InceptionBlock(tf.keras.layers.Layer):  # type: ignore[misc]
 
     def get_config(self) -> dict[str, object]:
         config = super().get_config()
-        config.update({
-            "filters": self.filters,
-            "kernel_time": self.kernel_time,
-            "kernel_freq": self.kernel_freq,
-            "dilation": self.dilation,
-        })
+        config.update(
+            {
+                "filters": self.filters,
+                "kernel_time": self.kernel_time,
+                "kernel_freq": self.kernel_freq,
+                "dilation": self.dilation,
+            }
+        )
         return config
 
 
@@ -154,15 +150,15 @@ class InceptionClassifier(tf.keras.Model):  # type: ignore[misc]
         self._filters = filters
 
         # CNN1 blocks: initial feature extraction
-        self.cnn1_blocks: list[tuple[
-            tf.keras.layers.Conv2D,
-            SubSpectralNormalization,
-            tf.keras.layers.ReLU,
-        ]] = []
+        self.cnn1_blocks: list[
+            tuple[
+                tf.keras.layers.Conv2D,
+                SubSpectralNormalization,
+                tf.keras.layers.ReLU,
+            ]
+        ] = []
         for i in range(n_cnn1_blocks):
-            conv = tf.keras.layers.Conv2D(
-                filters, (5, 5), padding="same", name=f"cnn1_conv_{i}"
-            )
+            conv = tf.keras.layers.Conv2D(filters, (5, 5), padding="same", name=f"cnn1_conv_{i}")
             ssn = SubSpectralNormalization(num_sub_bands=5, name=f"cnn1_ssn_{i}")
             relu = tf.keras.layers.ReLU(name=f"cnn1_relu_{i}")
             self.cnn1_blocks.append((conv, ssn, relu))
@@ -171,9 +167,7 @@ class InceptionClassifier(tf.keras.Model):  # type: ignore[misc]
         self.inception_blocks: list[InceptionBlock] = []
         for i in range(n_inception_blocks):
             dilation = 1 + (i % 3)  # cycle through 1, 2, 3
-            block = InceptionBlock(
-                filters=filters, dilation=dilation, name=f"inception_{i}"
-            )
+            block = InceptionBlock(filters=filters, dilation=dilation, name=f"inception_{i}")
             self.inception_blocks.append(block)
 
         # Classification head
@@ -181,9 +175,7 @@ class InceptionClassifier(tf.keras.Model):  # type: ignore[misc]
         self.dropout = tf.keras.layers.Dropout(dropout)
         self.dense_out = tf.keras.layers.Dense(1, activation="sigmoid")
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         """Forward pass.
 
         Args:
@@ -210,11 +202,13 @@ class InceptionClassifier(tf.keras.Model):  # type: ignore[misc]
 
     def get_config(self) -> dict[str, object]:
         config = super().get_config()
-        config.update({
-            "n_frames": self.n_frames,
-            "n_features": self.n_features,
-            "filters": self._filters,
-        })
+        config.update(
+            {
+                "n_frames": self.n_frames,
+                "n_features": self.n_features,
+                "filters": self._filters,
+            }
+        )
         return config
 
 
@@ -258,23 +252,17 @@ class MixConvBlock(tf.keras.layers.Layer):  # type: ignore[misc]
 
         self._needs_projection = in_channels != self.filters
         if self._needs_projection:
-            self.residual_proj = tf.keras.layers.Conv2D(
-                self.filters, (1, 1), padding="same"
-            )
+            self.residual_proj = tf.keras.layers.Conv2D(self.filters, (1, 1), padding="same")
 
         # Optional channel attention (CBAM-style squeeze-and-excitation)
         if self.use_attention:
             self.se_pool = tf.keras.layers.GlobalAveragePooling2D(keepdims=True)
-            self.se_fc1 = tf.keras.layers.Dense(
-                max(1, self.filters // 4), activation="relu"
-            )
+            self.se_fc1 = tf.keras.layers.Dense(max(1, self.filters // 4), activation="relu")
             self.se_fc2 = tf.keras.layers.Dense(self.filters, activation="sigmoid")
 
         super().build(input_shape)
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         groups = tf.split(x, len(self.dw_convs), axis=-1)
         mixed = [conv(g) for conv, g in zip(self.dw_convs, groups)]
         out = tf.concat(mixed, axis=-1)
@@ -295,11 +283,13 @@ class MixConvBlock(tf.keras.layers.Layer):  # type: ignore[misc]
 
     def get_config(self) -> dict[str, object]:
         config = super().get_config()
-        config.update({
-            "filters": self.filters,
-            "num_groups": self.num_groups,
-            "use_attention": self.use_attention,
-        })
+        config.update(
+            {
+                "filters": self.filters,
+                "num_groups": self.num_groups,
+                "use_attention": self.use_attention,
+            }
+        )
         return config
 
 
@@ -330,9 +320,7 @@ class MixedNetClassifier(tf.keras.Model):  # type: ignore[misc]
         self._filters = filters
 
         # Initial conv to expand channels
-        self.init_conv = tf.keras.layers.Conv2D(
-            filters, (3, 3), padding="same", name="init_conv"
-        )
+        self.init_conv = tf.keras.layers.Conv2D(filters, (3, 3), padding="same", name="init_conv")
         self.init_bn = tf.keras.layers.BatchNormalization(name="init_bn")
         self.init_relu = tf.keras.layers.ReLU(name="init_relu")
 
@@ -355,9 +343,7 @@ class MixedNetClassifier(tf.keras.Model):  # type: ignore[misc]
         self.dropout = tf.keras.layers.Dropout(dropout)
         self.dense_out = tf.keras.layers.Dense(1, activation="sigmoid")
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         """Forward pass.
 
         Args:
@@ -383,12 +369,236 @@ class MixedNetClassifier(tf.keras.Model):  # type: ignore[misc]
 
     def get_config(self) -> dict[str, object]:
         config = super().get_config()
-        config.update({
-            "n_frames": self.n_frames,
-            "n_features": self.n_features,
-            "filters": self._filters,
-        })
+        config.update(
+            {
+                "n_frames": self.n_frames,
+                "n_features": self.n_features,
+                "filters": self._filters,
+            }
+        )
         return config
+
+
+def _fuse_conv_bn(
+    conv: tf.keras.layers.Conv2D,
+    bn: tf.keras.layers.BatchNormalization,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fuse Conv2D (no bias) + BatchNormalization into a single (kernel, bias).
+
+    Returns:
+        (kernel_fused, bias_fused) numpy arrays.
+    """
+    kernel = conv.kernel.numpy()
+    gamma = bn.gamma.numpy()
+    beta = bn.beta.numpy()
+    mean = bn.moving_mean.numpy()
+    var = bn.moving_variance.numpy()
+    eps = bn.epsilon
+
+    scale = gamma / np.sqrt(var + eps)
+    kernel_fused = kernel * scale[np.newaxis, np.newaxis, np.newaxis, :]
+    bias_fused = -mean * scale + beta
+    return kernel_fused, bias_fused
+
+
+class RepBlock(tf.keras.layers.Layer):  # type: ignore[misc]
+    """Re-parameterizable block: multi-branch during training, single conv at deploy.
+
+    Training branches:
+      A: Conv2D(3x3) + BatchNorm
+      B: Conv2D(1x1) + BatchNorm
+      C: BatchNorm only (identity shortcut, when in_channels == filters)
+
+    Output: ReLU(A + B + C)
+
+    At export time, all branches fuse into a single 3x3 Conv2D + bias.
+    """
+
+    def __init__(self, filters: int, **kwargs: object):
+        super().__init__(**kwargs)
+        self._filters = filters
+
+    def build(self, input_shape: tf.TensorShape) -> None:
+        f = self._filters
+        in_channels = int(input_shape[-1])
+
+        # Branch A: 3x3
+        self.conv3x3 = tf.keras.layers.Conv2D(
+            f, (3, 3), padding="same", use_bias=False, name="rep_conv3x3"
+        )
+        self.bn3x3 = tf.keras.layers.BatchNormalization(name="rep_bn3x3")
+
+        # Branch B: 1x1
+        self.conv1x1 = tf.keras.layers.Conv2D(
+            f, (1, 1), padding="same", use_bias=False, name="rep_conv1x1"
+        )
+        self.bn1x1 = tf.keras.layers.BatchNormalization(name="rep_bn1x1")
+
+        # Branch C: identity (only when channels match)
+        self._has_identity = in_channels == f
+        if self._has_identity:
+            self.bn_identity = tf.keras.layers.BatchNormalization(name="rep_bn_id")
+
+        self.relu = tf.keras.layers.ReLU()
+        super().build(input_shape)
+
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
+        a = self.bn3x3(self.conv3x3(x), training=training)
+        b = self.bn1x1(self.conv1x1(x), training=training)
+        out = a + b
+        if self._has_identity:
+            out = out + self.bn_identity(x, training=training)
+        return self.relu(out)
+
+    def fuse(self) -> tuple[np.ndarray, np.ndarray]:
+        """Fuse all branches into a single 3x3 kernel + bias."""
+        # Branch A: already 3x3
+        k3, b3 = _fuse_conv_bn(self.conv3x3, self.bn3x3)
+
+        # Branch B: 1x1 → pad to 3x3
+        k1, b1 = _fuse_conv_bn(self.conv1x1, self.bn1x1)
+        k1_padded = np.zeros_like(k3)
+        k1_padded[1:2, 1:2, :, :] = k1
+
+        k_total = k3 + k1_padded
+        b_total = b3 + b1
+
+        # Branch C: identity
+        if self._has_identity:
+            in_channels = int(k3.shape[2])
+            bn = self.bn_identity
+            gamma = bn.gamma.numpy()
+            beta = bn.beta.numpy()
+            mean = bn.moving_mean.numpy()
+            var = bn.moving_variance.numpy()
+            eps = bn.epsilon
+            scale = gamma / np.sqrt(var + eps)
+
+            k_id = np.zeros_like(k3)
+            for c in range(in_channels):
+                k_id[1, 1, c, c] = scale[c]
+            b_id = -mean * scale + beta
+
+            k_total = k_total + k_id
+            b_total = b_total + b_id
+
+        return k_total, b_total
+
+    def get_config(self) -> dict[str, object]:
+        config = super().get_config()
+        config["filters"] = self._filters
+        return config
+
+
+class RepCNNClassifier(tf.keras.Model):  # type: ignore[misc]
+    """RepCNN wake word classifier with structural re-parameterization.
+
+    Training: multi-branch RepBlocks (3x3 + 1x1 + identity).
+    Deploy: fused single-conv blocks via reparameterize_model().
+
+    Architecture:
+        Input (N_frames, N_features) → expand_dims → (N_frames, N_features, 1)
+        → Conv2D(filters, 3x3) + BN + ReLU (channel expansion)
+        → N × RepBlock(filters)
+        → GlobalAveragePooling2D → Dropout → Dense(1, sigmoid)
+    """
+
+    def __init__(
+        self,
+        n_frames: int = 99,
+        n_features: int = 40,
+        filters: int = 16,
+        n_blocks: int = 3,
+        dropout: float = 0.1,
+        **kwargs: object,
+    ):
+        super().__init__(**kwargs)
+        self.n_frames = n_frames
+        self.n_features = n_features
+        self._filters = filters
+
+        # Initial conv to expand channels
+        self.init_conv = tf.keras.layers.Conv2D(
+            filters, (3, 3), padding="same", use_bias=False, name="init_conv"
+        )
+        self.init_bn = tf.keras.layers.BatchNormalization(name="init_bn")
+        self.init_relu = tf.keras.layers.ReLU(name="init_relu")
+
+        # RepBlocks
+        self.rep_blocks: list[RepBlock] = []
+        for i in range(n_blocks):
+            self.rep_blocks.append(RepBlock(filters=filters, name=f"repblock_{i}"))
+
+        # Classification head
+        self.global_pool = tf.keras.layers.GlobalAveragePooling2D()
+        self.dropout = tf.keras.layers.Dropout(dropout)
+        self.dense_out = tf.keras.layers.Dense(1, activation="sigmoid")
+
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
+        x = tf.expand_dims(x, axis=-1)
+        x = self.init_relu(self.init_bn(self.init_conv(x), training=training))
+        for block in self.rep_blocks:
+            x = block(x, training=training)
+        x = self.global_pool(x)
+        x = self.dropout(x, training=training)
+        return self.dense_out(x)
+
+    def get_config(self) -> dict[str, object]:
+        config = super().get_config()
+        config.update(
+            {
+                "n_frames": self.n_frames,
+                "n_features": self.n_features,
+                "filters": self._filters,
+            }
+        )
+        return config
+
+
+def reparameterize_model(rep_model: RepCNNClassifier) -> tf.keras.Model:
+    """Fuse RepCNN multi-branch blocks into plain Conv2D layers.
+
+    Creates a functional Keras model with no BatchNormalization layers,
+    suitable for TFLite export and quantization.
+
+    Args:
+        rep_model: A built RepCNNClassifier (must have been called at least once).
+
+    Returns:
+        A plain tf.keras.Model with fused weights and identical output.
+    """
+    n_frames = rep_model.n_frames
+    n_features = rep_model.n_features
+
+    inp = tf.keras.Input(shape=(n_frames, n_features))
+    x = tf.keras.layers.Reshape((n_frames, n_features, 1))(inp)
+
+    # Fuse init conv + BN
+    k_init, b_init = _fuse_conv_bn(rep_model.init_conv, rep_model.init_bn)
+    init_conv = tf.keras.layers.Conv2D(
+        k_init.shape[-1], (3, 3), padding="same", name="fused_init_conv"
+    )
+    # Build the layer first, then set weights
+    x = init_conv(x)
+    init_conv.set_weights([k_init, b_init])
+    x = tf.keras.layers.ReLU()(x)
+
+    # Fuse each RepBlock
+    for i, block in enumerate(rep_model.rep_blocks):
+        k, b = block.fuse()
+        conv = tf.keras.layers.Conv2D(
+            k.shape[-1], (3, 3), padding="same", name=f"fused_repblock_{i}"
+        )
+        x = conv(x)
+        conv.set_weights([k, b])
+        x = tf.keras.layers.ReLU()(x)
+
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    dense = tf.keras.layers.Dense(1, activation="sigmoid", name="fused_dense")
+    x = dense(x)
+    dense.set_weights(rep_model.dense_out.get_weights())
+
+    return tf.keras.Model(inputs=inp, outputs=x, name="fused_repcnn")
 
 
 def build_classifier(
@@ -422,6 +632,13 @@ def build_classifier(
         )
     elif model_type == ModelType.mixednet:
         return MixedNetClassifier(
+            n_frames=n_frames,
+            n_features=n_features,
+            filters=filters,
+            n_blocks=n_blocks,
+        )
+    elif model_type == ModelType.repcnn:
+        return RepCNNClassifier(
             n_frames=n_frames,
             n_features=n_features,
             filters=filters,

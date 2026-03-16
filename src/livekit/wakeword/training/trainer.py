@@ -12,7 +12,7 @@ from typing import TypedDict
 import numpy as np
 import tensorflow as tf
 
-from ..config import WakeWordConfig
+from ..config import ModelType, WakeWordConfig
 from ..data.dataset import create_tf_dataset
 from ..models.pipeline import WakeWordClassifier
 from ..utils import configure_gpu
@@ -301,9 +301,7 @@ class WakeWordTrainer:
             # Only sync loss to CPU periodically (avoids GPU stall every step)
             if step % log_interval == 0:
                 last_loss = float(loss.numpy())
-            pbar.set_postfix(
-                loss=f"{last_loss:.4f}", lr=f"{lr:.1e}", neg_w=f"{neg_weight:.0f}"
-            )
+            pbar.set_postfix(loss=f"{last_loss:.4f}", lr=f"{lr:.1e}", neg_w=f"{neg_weight:.0f}")
 
             # Validation in final quarter
             if step >= steps * 3 // 4 and step % validation_interval == 0:
@@ -370,6 +368,10 @@ class WakeWordTrainer:
         # Select and average best checkpoints
         self._average_best_checkpoints()
 
+        # Optional QAT phase
+        if self.config.enable_qat:
+            self._qat_phase(dataset)
+
         # Log final averaged model metrics
         final_metrics = self._validate()
         self._log_metrics(total_steps, 0, {**final_metrics, "note": "final_averaged"})  # type: ignore[arg-type]
@@ -401,6 +403,76 @@ class WakeWordTrainer:
             validation_hours=validation_hours,
             target_fpph=self.config.target_fp_per_hour,
         )
+
+    def _qat_phase(self, dataset: tf.data.Dataset) -> None:
+        """Quantization-aware training phase: insert FakeQuant ops and fine-tune."""
+        try:
+            import tensorflow_model_optimization as tfmot
+        except ImportError:
+            logger.warning(
+                "tensorflow-model-optimization not installed, skipping QAT. "
+                "Install with: pip install tensorflow-model-optimization"
+            )
+            return
+
+        logger.info(f"=== QAT Phase: {self.config.qat_steps} steps ===")
+
+        # For RepCNN, reparameterize first so tfmot gets plain layers
+        if self.config.model.model_type == ModelType.repcnn:
+            from ..models.classifier import reparameterize_model
+
+            base_model = reparameterize_model(self.model.classifier)
+        else:
+            base_model = self.model
+
+        # Wrap with quantization-aware training
+        try:
+            qat_model = tfmot.quantization.keras.quantize_model(base_model)
+        except Exception:
+            logger.warning("Failed to apply QAT (custom layers not supported), skipping")
+            return
+
+        qat_lr = self.config.learning_rate * 0.001
+        optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=qat_lr,
+            weight_decay=self.config.weight_decay,
+        )
+        optimizer.build(qat_model.trainable_variables)
+
+        label_smoothing_t = tf.constant(self.config.label_smoothing, dtype=tf.float32)
+        neg_weight_t = tf.constant(self.config.max_negative_weight, dtype=tf.float32)
+
+        from tqdm import tqdm
+
+        data_iter = iter(dataset)
+        pbar = tqdm(range(self.config.qat_steps), desc="QAT", unit="step")
+        for step in pbar:
+            try:
+                features, labels = next(data_iter)
+            except StopIteration:
+                data_iter = iter(dataset)
+                features, labels = next(data_iter)
+
+            # Label smoothing
+            labels = labels * (1 - label_smoothing_t) + 0.5 * label_smoothing_t
+
+            with tf.GradientTape() as tape:
+                predictions = tf.squeeze(qat_model(features, training=True), axis=-1)
+                loss_per_sample = focal_loss(predictions, labels, gamma=2.0)
+                weights = tf.where(labels < 0.5, neg_weight_t, 1.0)
+                loss = tf.reduce_mean(loss_per_sample * weights)
+
+            gradients = tape.gradient(loss, qat_model.trainable_variables)
+            optimizer.apply_gradients(zip(gradients, qat_model.trainable_variables))
+
+            if step % max(1, self.config.qat_steps // 100) == 0:
+                pbar.set_postfix(loss=f"{float(loss.numpy()):.4f}")
+
+        # Save QAT model
+        qat_path = self.config.model_output_dir / f"{self.config.model_name}.qat.keras"
+        qat_path.parent.mkdir(parents=True, exist_ok=True)
+        qat_model.save(str(qat_path))
+        logger.info(f"Saved QAT model to {qat_path}")
 
     def _average_best_checkpoints(self) -> None:
         """Average weights of top checkpoints.

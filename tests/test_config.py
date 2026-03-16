@@ -29,6 +29,8 @@ def test_model_size_presets():
     assert MODEL_SIZE_PRESETS[ModelSize.small] == (16, 3)
     assert MODEL_SIZE_PRESETS[ModelSize.medium] == (24, 5)
     assert MODEL_SIZE_PRESETS[ModelSize.large] == (32, 7)
+    assert MODEL_SIZE_PRESETS[ModelSize.xlarge] == (48, 9)
+    assert MODEL_SIZE_PRESETS[ModelSize.xxlarge] == (64, 11)
 
 
 def test_model_config_properties():
@@ -76,6 +78,12 @@ def test_augmentation_config_defaults():
     assert config.augmentation.window_size_ms == 30
     assert config.augmentation.window_step_ms == 20
     assert config.augmentation.num_channels == 40
+
+
+def test_qat_config_defaults():
+    config = WakeWordConfig(model_name="test", target_phrases=["test"])
+    assert config.enable_qat is False
+    assert config.qat_steps == 5000
 
 
 def test_n_frames_property():

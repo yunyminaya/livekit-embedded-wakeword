@@ -16,6 +16,7 @@ _logger = logging.getLogger(__name__)
 class ModelType(StrEnum):
     inception = "inception"
     mixednet = "mixednet"
+    repcnn = "repcnn"
 
 
 class ModelSize(StrEnum):
@@ -23,16 +24,21 @@ class ModelSize(StrEnum):
     small = "small"
     medium = "medium"
     large = "large"
+    xlarge = "xlarge"
+    xxlarge = "xxlarge"
 
 
 # Preset mapping: size -> (filters, n_blocks)
 # For inception: filters is base channel count, n_blocks is inception block count
 # For mixednet: filters is channel count, n_blocks is mixconv block count
+# For repcnn: filters is channel count, n_blocks is RepBlock count
 MODEL_SIZE_PRESETS: dict[ModelSize, tuple[int, int]] = {
     ModelSize.tiny: (8, 2),
     ModelSize.small: (16, 3),
     ModelSize.medium: (24, 5),
     ModelSize.large: (32, 7),
+    ModelSize.xlarge: (48, 9),
+    ModelSize.xxlarge: (64, 11),
 }
 
 
@@ -105,6 +111,10 @@ class WakeWordConfig(BaseModel):
             "negative_speech": 1024,
         }
     )
+
+    # Quantization-aware training
+    enable_qat: bool = False
+    qat_steps: int = 5000
 
     @model_validator(mode="after")
     def _warn_unknown_batch_keys(self) -> Self:

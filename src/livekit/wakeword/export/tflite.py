@@ -7,7 +7,7 @@ from pathlib import Path
 
 import tensorflow as tf
 
-from ..config import WakeWordConfig
+from ..config import ModelType, WakeWordConfig
 from ..models.pipeline import WakeWordClassifier
 
 logger = logging.getLogger(__name__)
@@ -36,10 +36,18 @@ def export_classifier(
     model(dummy, training=False)
     model.load_weights(str(weights_path))
 
+    # For RepCNN, fuse multi-branch blocks into plain conv layers
+    if config.model.model_type == ModelType.repcnn:
+        from ..models.classifier import reparameterize_model
+
+        inference_model = reparameterize_model(model.classifier)
+    else:
+        inference_model = model
+
     # Create concrete function with fixed input shape
     @tf.function(input_signature=[tf.TensorSpec(shape=[1, n_frames, n_channels], dtype=tf.float32)])
     def serving_fn(x: tf.Tensor) -> tf.Tensor:
-        return model(x, training=False)
+        return inference_model(x, training=False)
 
     # Convert to TFLite
     converter = tf.lite.TFLiteConverter.from_concrete_functions(
@@ -51,10 +59,7 @@ def export_classifier(
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(tflite_model)
-    logger.info(
-        f"Exported TFLite model to {output_path} "
-        f"({len(tflite_model) / 1024:.1f} KB)"
-    )
+    logger.info(f"Exported TFLite model to {output_path} ({len(tflite_model) / 1024:.1f} KB)")
     return output_path
 
 
@@ -78,9 +83,17 @@ def quantize_tflite(
     model(dummy, training=False)
     model.load_weights(str(weights_path))
 
+    # For RepCNN, fuse multi-branch blocks into plain conv layers
+    if config.model.model_type == ModelType.repcnn:
+        from ..models.classifier import reparameterize_model
+
+        inference_model = reparameterize_model(model.classifier)
+    else:
+        inference_model = model
+
     @tf.function(input_signature=[tf.TensorSpec(shape=[1, n_frames, n_channels], dtype=tf.float32)])
     def serving_fn(x: tf.Tensor) -> tf.Tensor:
-        return model(x, training=False)
+        return inference_model(x, training=False)
 
     converter = tf.lite.TFLiteConverter.from_concrete_functions(
         [serving_fn.get_concrete_function()]
@@ -93,8 +106,51 @@ def quantize_tflite(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(tflite_model)
     logger.info(
-        f"Exported quantized TFLite model to {output_path} "
-        f"({len(tflite_model) / 1024:.1f} KB)"
+        f"Exported quantized TFLite model to {output_path} ({len(tflite_model) / 1024:.1f} KB)"
+    )
+    return output_path
+
+
+def export_qat_classifier(
+    config: WakeWordConfig,
+    output_path: Path,
+) -> Path:
+    """Export a QAT-trained model to fully INT8-quantized TFLite.
+
+    Loads the .qat.keras model, strips FakeQuant wrappers, and converts
+    with INT8 input type for optimal ESP32-S3 inference.
+    """
+    import tensorflow_model_optimization as tfmot
+
+    model_dir = config.model_output_dir
+    qat_path = model_dir / f"{config.model_name}.qat.keras"
+    if not qat_path.exists():
+        raise FileNotFoundError(f"QAT model not found: {qat_path}")
+
+    qat_model = tf.keras.models.load_model(str(qat_path))
+    stripped_model = tfmot.quantization.keras.strip_quantize(qat_model)
+
+    n_frames = config.n_frames
+    n_channels = config.augmentation.num_channels
+
+    @tf.function(input_signature=[tf.TensorSpec(shape=[1, n_frames, n_channels], dtype=tf.float32)])
+    def serving_fn(x: tf.Tensor) -> tf.Tensor:
+        return stripped_model(x, training=False)
+
+    converter = tf.lite.TFLiteConverter.from_concrete_functions(
+        [serving_fn.get_concrete_function()]
+    )
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    converter.inference_input_type = tf.int8
+    converter.inference_output_type = tf.float32
+
+    tflite_model = converter.convert()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(tflite_model)
+    logger.info(
+        f"Exported QAT INT8 TFLite model to {output_path} ({len(tflite_model) / 1024:.1f} KB)"
     )
     return output_path
 
@@ -111,7 +167,13 @@ def run_export(config: WakeWordConfig, quantize: bool = False) -> Path:
     tflite_path = model_dir / f"{config.model_name}.tflite"
     export_classifier(config, weights_path, tflite_path)
 
-    # Optionally quantize
+    # If QAT model exists, export it as INT8
+    qat_path = model_dir / f"{config.model_name}.qat.keras"
+    if qat_path.exists():
+        qat_tflite_path = model_dir / f"{config.model_name}_qat_int8.tflite"
+        export_qat_classifier(config, qat_tflite_path)
+
+    # Optionally quantize (dynamic range)
     if quantize:
         quantize_tflite(config, weights_path)
 
