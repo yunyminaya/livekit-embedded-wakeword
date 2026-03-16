@@ -110,7 +110,8 @@ def _compute_aut(fpr: np.ndarray, fnr: np.ndarray) -> float:
     sort_idx = np.argsort(fpr)
     fpr_sorted = fpr[sort_idx]
     fnr_sorted = fnr[sort_idx]
-    return float(np.trapezoid(fnr_sorted, fpr_sorted))
+    trapz = getattr(np, "trapezoid", np.trapz)
+    return float(trapz(fnr_sorted, fpr_sorted))
 
 
 def _plot_det_curve(
