@@ -147,4 +147,4 @@ target_fp_per_hour: 0.1
 batch_n_per_class:
   positive: 50 # wake word samples
   adversarial_negative: 50 # phonetically similar non-wake-words
-  negative_speech: 1024 # general negative speech features
+  negative_speech: 512 # general negative speech features
