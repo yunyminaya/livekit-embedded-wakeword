@@ -41,9 +41,6 @@ def configure_gpu() -> None:
         if gpus:
             names = [g.name for g in gpus]
             logger.info(f"TensorFlow using {len(gpus)} GPU(s): {names}")
-            # Mixed precision: use float16 compute with float32 accumulation
-            tf.keras.mixed_precision.set_global_policy("mixed_float16")
-            logger.info("Mixed precision enabled (float16 compute)")
         else:
             logger.info("TensorFlow: no GPU found, using CPU")
     except Exception as e:

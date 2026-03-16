@@ -69,9 +69,6 @@ def focal_loss(
     Returns:
         Per-sample focal loss, shape (N,).
     """
-    # Cast to float32 for numerical stability (mixed precision outputs float16)
-    predictions = tf.cast(predictions, tf.float32)
-    targets = tf.cast(targets, tf.float32)
     # Clip to avoid log(0)
     eps = 1e-7
     predictions = tf.clip_by_value(predictions, eps, 1.0 - eps)
