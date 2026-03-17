@@ -623,6 +623,173 @@ class RepCNNClassifier(tf.keras.Model):  # type: ignore[misc]
         return config
 
 
+class LiGLUBlock(tf.keras.layers.Layer):  # type: ignore[misc]
+    """Linear Gated Linear Unit block with causal dilated depthwise convolution.
+
+    Gate projection → GLU gating → causal depthwise conv → LayerNorm → Swish → output projection.
+    Block-level residual connection.
+    """
+
+    def __init__(self, channels: int, dilation_rate: int = 1, **kwargs: object):
+        super().__init__(**kwargs)
+        self._channels = channels
+        self._dilation_rate = dilation_rate
+
+    def build(self, input_shape: tf.TensorShape) -> None:
+        ch = self._channels
+
+        # Phase 1: Gate projection (pointwise expand to 2x for GLU)
+        self.gate_proj = tf.keras.layers.Conv1D(ch * 2, 1, name="gate_proj")
+
+        # Phase 3: Causal depthwise conv
+        self.dw_conv = tf.keras.layers.Conv1D(
+            ch,
+            kernel_size=5,
+            groups=ch,
+            dilation_rate=self._dilation_rate,
+            padding="valid",
+            name="dw_conv",
+        )
+
+        # Phase 4: LayerNorm
+        self.layer_norm = tf.keras.layers.LayerNormalization(axis=-1, name="ln")
+
+        # Phase 6: Output projection (pointwise)
+        self.out_proj = tf.keras.layers.Conv1D(ch, 1, name="out_proj")
+
+        # Residual projection if needed
+        in_channels = int(input_shape[-1])
+        self._needs_projection = in_channels != ch
+        if self._needs_projection:
+            self.residual_proj = tf.keras.layers.Conv1D(ch, 1, name="residual_proj")
+
+        super().build(input_shape)
+
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
+        residual = x
+
+        # Phase 1: Gate projection
+        projected = self.gate_proj(x)
+
+        # Phase 2: GLU gating — split + value * sigmoid(gate)
+        value, gate = tf.split(projected, 2, axis=-1)
+        x = value * tf.sigmoid(gate)
+
+        # Phase 3: Causal depthwise conv with manual left-padding
+        # For kernel_size=5 and dilation_rate=d, receptive field = (5-1)*d = 4*d
+        pad_len = (5 - 1) * self._dilation_rate
+        x = tf.pad(x, [[0, 0], [pad_len, 0], [0, 0]])
+        x = self.dw_conv(x)
+
+        # Phase 4: LayerNorm
+        x = self.layer_norm(x)
+
+        # Phase 5: Swish activation
+        x = tf.nn.silu(x)
+
+        # Phase 6: Output projection
+        x = self.out_proj(x)
+
+        # Block-level residual
+        if self._needs_projection:
+            residual = self.residual_proj(residual)
+        return x + residual
+
+    def get_config(self) -> dict[str, object]:
+        config = super().get_config()
+        config["channels"] = self._channels
+        config["dilation_rate"] = self._dilation_rate
+        return config
+
+
+class WakeNet9Classifier(tf.keras.Model):  # type: ignore[misc]
+    """WakeNet9-style 1D CNN wake word classifier with LiGLU blocks.
+
+    Architecture:
+        Input (N_frames, N_features) → Conv1D(filters, 1) + Swish + LayerNorm
+        → N × LiGLUBlock (cyclic dilations)
+        → Long-range residual (penultimate → last block output, when n_blocks >= 3)
+        → GlobalAveragePooling1D → Dropout → Dense(1, sigmoid)
+    """
+
+    DILATION_PATTERN: tuple[int, ...] = (1, 2, 3, 4, 3)
+
+    def __init__(
+        self,
+        n_frames: int = 99,
+        n_features: int = 40,
+        filters: int = 16,
+        n_blocks: int = 3,
+        dropout: float = 0.1,
+        **kwargs: object,
+    ):
+        super().__init__(**kwargs)
+        self.n_frames = n_frames
+        self.n_features = n_features
+        self._filters = filters
+        self._n_blocks = n_blocks
+
+        # Initial projection: n_features → filters
+        self.init_conv = tf.keras.layers.Conv1D(filters, 1, name="init_conv")
+        self.init_ln = tf.keras.layers.LayerNormalization(axis=-1, name="init_ln")
+
+        # LiGLU blocks with cyclic dilations
+        self.liglu_blocks: list[LiGLUBlock] = []
+        for i in range(n_blocks):
+            d = self.DILATION_PATTERN[i % len(self.DILATION_PATTERN)]
+            self.liglu_blocks.append(
+                LiGLUBlock(channels=filters, dilation_rate=d, name=f"liglu_{i}")
+            )
+
+        self._use_long_residual = n_blocks >= 3
+
+        # Classification head
+        self.global_pool = tf.keras.layers.GlobalAveragePooling1D()
+        self.dropout = tf.keras.layers.Dropout(dropout)
+        self.dense_out = tf.keras.layers.Dense(1, activation="sigmoid")
+
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
+        """Forward pass.
+
+        Args:
+            x: (batch, N_frames, N_features) spectrogram features
+
+        Returns:
+            (batch, 1) confidence score [0, 1]
+        """
+        # Input is already (batch, time, channels) — suitable for Conv1D
+        x = self.init_conv(x)
+        x = tf.nn.silu(x)
+        x = self.init_ln(x)
+
+        # LiGLU blocks with long-range residual
+        for i, block in enumerate(self.liglu_blocks):
+            # Save penultimate block output for long-range residual
+            if self._use_long_residual and i == len(self.liglu_blocks) - 2:
+                long_residual = x
+            x = block(x, training=training)
+
+        # Add long-range residual after last block
+        if self._use_long_residual:
+            x = x + long_residual
+
+        # Classification head
+        x = self.global_pool(x)
+        x = self.dropout(x, training=training)
+        return self.dense_out(x)
+
+    def get_config(self) -> dict[str, object]:
+        config = super().get_config()
+        config.update(
+            {
+                "n_frames": self.n_frames,
+                "n_features": self.n_features,
+                "filters": self._filters,
+            }
+        )
+        return config
+
+
 def reparameterize_model(rep_model: RepCNNClassifier) -> tf.keras.Model:
     """Fuse RepCNN multi-branch blocks into plain DW-Conv + PW-Conv layers.
 
@@ -724,6 +891,13 @@ def build_classifier(
         )
     elif model_type == ModelType.repcnn:
         return RepCNNClassifier(
+            n_frames=n_frames,
+            n_features=n_features,
+            filters=filters,
+            n_blocks=n_blocks,
+        )
+    elif model_type == ModelType.wakenet9:
+        return WakeNet9Classifier(
             n_frames=n_frames,
             n_features=n_features,
             filters=filters,

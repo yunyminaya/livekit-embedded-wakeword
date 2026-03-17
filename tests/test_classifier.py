@@ -1,4 +1,4 @@
-"""Tests for Inception, MixedNet, and RepCNN classifiers."""
+"""Tests for Inception, MixedNet, RepCNN, and WakeNet9 classifiers."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from livekit.wakeword.models.classifier import (
     InceptionClassifier,
     MixedNetClassifier,
     RepCNNClassifier,
+    WakeNet9Classifier,
     build_classifier,
     reparameterize_model,
 )
@@ -58,6 +59,34 @@ class TestRepCNNClassifier:
     def test_training_mode(self, sample_spectrogram: np.ndarray):
         model = RepCNNClassifier(n_frames=99, n_features=40, filters=8, n_blocks=2)
         out = model(sample_spectrogram, training=True)
+        assert out.shape == (4, 1)
+
+
+class TestWakeNet9Classifier:
+    def test_output_shape(self, sample_spectrogram: np.ndarray):
+        model = WakeNet9Classifier(n_frames=99, n_features=40, filters=16, n_blocks=3)
+        out = model(sample_spectrogram, training=False)
+        assert out.shape == (4, 1)
+
+    def test_output_range(self, sample_spectrogram: np.ndarray):
+        model = WakeNet9Classifier(n_frames=99, n_features=40, filters=16, n_blocks=3)
+        out = model(sample_spectrogram, training=False).numpy()
+        assert np.all(out >= 0) and np.all(out <= 1)
+
+    def test_training_mode(self, sample_spectrogram: np.ndarray):
+        model = WakeNet9Classifier(n_frames=99, n_features=40, filters=16, n_blocks=3)
+        out = model(sample_spectrogram, training=True)
+        assert out.shape == (4, 1)
+
+    def test_dilation_cycling(self):
+        model = WakeNet9Classifier(n_frames=99, n_features=40, filters=8, n_blocks=7)
+        dilations = [b._dilation_rate for b in model.liglu_blocks]
+        assert dilations == [1, 2, 3, 4, 3, 1, 2]
+
+    def test_long_range_residual_disabled_small(self, sample_spectrogram: np.ndarray):
+        model = WakeNet9Classifier(n_frames=99, n_features=40, filters=8, n_blocks=2)
+        assert not model._use_long_residual
+        out = model(sample_spectrogram, training=False)
         assert out.shape == (4, 1)
 
 
@@ -114,6 +143,11 @@ class TestBuildClassifier:
 
     def test_build_repcnn(self, sample_spectrogram: np.ndarray):
         model = build_classifier(ModelType.repcnn, ModelSize.small)
+        out = model(sample_spectrogram, training=False)
+        assert out.shape == (4, 1)
+
+    def test_build_wakenet9(self, sample_spectrogram: np.ndarray):
+        model = build_classifier(ModelType.wakenet9, ModelSize.small)
         out = model(sample_spectrogram, training=False)
         assert out.shape == (4, 1)
 

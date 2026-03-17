@@ -9,6 +9,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "InceptionClassifier": (".classifier", "InceptionClassifier"),
     "MixedNetClassifier": (".classifier", "MixedNetClassifier"),
     "SubSpectralNormalization": (".classifier", "SubSpectralNormalization"),
+    "WakeNet9Classifier": (".classifier", "WakeNet9Classifier"),
     "build_classifier": (".classifier", "build_classifier"),
     "WakeWordClassifier": (".pipeline", "WakeWordClassifier"),
 }
@@ -29,6 +30,7 @@ __all__ = [
     "MicroFrontend",
     "MixedNetClassifier",
     "SubSpectralNormalization",
+    "WakeNet9Classifier",
     "WakeWordClassifier",
     "build_classifier",
 ]

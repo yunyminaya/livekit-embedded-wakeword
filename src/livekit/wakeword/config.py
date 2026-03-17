@@ -17,6 +17,7 @@ class ModelType(StrEnum):
     inception = "inception"
     mixednet = "mixednet"
     repcnn = "repcnn"
+    wakenet9 = "wakenet9"
 
 
 class ModelSize(StrEnum):
