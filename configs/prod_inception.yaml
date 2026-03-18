@@ -1,5 +1,5 @@
 # Model name — used for output directory and exported model filename
-model_name: hey_livekit
+model_name: hey_livekit_inception
 
 # Wake word phrases to detect (include spelling variations)
 target_phrases: ["hey livekit"]
@@ -53,12 +53,7 @@ noise_scale_ws: [0.98]
 length_scales: [0.75, 1.0, 1.25]
 
 # SLERP interpolation weights for speaker blending (0=speaker1, 1=speaker2)
-# Multiple weights create more diverse synthetic voices — values near 0/1
-# sound closer to original speakers, 0.5 is the midpoint blend
 slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
-
-# Cap on speaker IDs (null = all 904 speakers)
-# max_speakers: null
 
 # ============================================================================
 # Paths
@@ -75,25 +70,11 @@ output_dir: ./output
 # ============================================================================
 
 augmentation:
-  # Target clip duration in seconds after augmentation
-  # Controls the fixed-length window that all clips are padded/cropped to.
-  # Default 2.0s produces 99 spectrogram frames with 20ms hop.
   clip_duration: 2.0
-
-  # Batch size for augmentation processing
   batch_size: 16
-
-  # Number of augmentation passes per sample
-  # Suggestion: 1 for quick training, 2-3 for better generalization
   rounds: 3
-
-  # Background noise directories (downloaded via `setup`)
   background_paths: [./data/backgrounds]
-
-  # Room impulse response directories for reverb (downloaded via `setup`)
   rir_paths: [./data/rirs]
-
-  # Spectrogram parameters (matching micro_speech TFLite preprocessor)
   window_size_ms: 30
   window_step_ms: 20
   num_channels: 40
@@ -103,50 +84,22 @@ augmentation:
 # ============================================================================
 
 model:
-  # Classifier type:
-  #   "repcnn"     — RepVGG-style dilated DS-conv (recommended for ESP32-S3)
-  #   "inception"  — Inception CNN with sub-spectral normalization
-  #   "mixednet"   — MixedNet with multi-kernel depthwise convolutions
-  model_type: repcnn
-
-  # Model size: tiny (8f/2b), small (16f/3b), medium (24f/5b), large (32f/7b),
-  #             xlarge (48f/9b), xxlarge (64f/11b)
-  # Suggestion: small for embedded, medium for server, large+ for max accuracy
-  model_size: medium
+  # Inception CNN with sub-spectral normalization
+  model_type: inception
+  model_size: xxlarge
 
 # ============================================================================
 # Training
 # ============================================================================
 
-# Total training steps (phase 1)
-# Suggestion: 30000 for quick experiments, 50000-100000 for production
 steps: 100000
-
-# Base learning rate
-# Suggestion: 0.0001 works well for most cases
 learning_rate: 0.0001
-
-# AdamW weight decay for L2 regularization
-# Suggestion: 0.01 for most cases, 0.001 for tiny models
 weight_decay: 0.01
-
-# Label smoothing — softens targets from hard 0/1 to ε/1-ε
-# Prevents overconfident predictions and improves threshold calibration
-# Suggestion: 0.05 for production, 0.0 to disable
 label_smoothing: 0.05
-
-# Max weight for negative class (linearly increases during training)
-# Higher = fewer false positives, but may reduce recall
-# Suggestion: 1000-2000 for balanced, 3000+ for very low false positives
-max_negative_weight: 3000
-
-# Target false positives per hour on validation set
-# Used for adaptive negative weight doubling and threshold optimization
-# Suggestion: 0.1-0.5 for production, 1.0+ for prototyping
+max_negative_weight: 1500
 target_fp_per_hour: 0.1
 
-# Batch composition per training step
 batch_n_per_class:
-  positive: 50 # wake word samples
-  adversarial_negative: 50 # phonetically similar non-wake-words
-  negative_speech: 512 # general negative speech features
+  positive: 50
+  adversarial_negative: 50
+  negative_speech: 128

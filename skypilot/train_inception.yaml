@@ -1,0 +1,57 @@
+name: livekit-wakeword-train-inception
+
+resources:
+  cloud: nebius
+  accelerators: L40S:1
+  cpus: 8+
+  memory: 64+
+  disk_size: 500
+  autostop:
+    idle_minutes: 10
+    down: false
+
+workdir: .
+
+file_mounts:
+  /outputs:
+    source: nebius://wakeword-model-bucket
+    mode: MOUNT
+
+setup: |
+  set -e
+  sudo apt-get update && sudo apt-get install -y espeak-ng libsndfile1 ffmpeg sox portaudio19-dev
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.cargo/bin:$PATH"
+  # Persist data and output outside workdir so they survive re-syncs
+  mkdir -p ${DATA_DIR} ${OUTPUT_DIR}
+  ln -sfn ${DATA_DIR} data
+  ln -sfn ${OUTPUT_DIR} output
+  uv sync --extra train --extra datagen --extra eval
+  uv run livekit-wakeword setup --data-dir ${DATA_DIR}
+
+run: |
+  set -e
+  export PATH="$HOME/.cargo/bin:$PATH"
+  # Kill lingering workers from previous jobs (Ray keeps them alive, eating RAM)
+  pkill -f "livekit-wakeword" || true
+  sleep 2
+  ln -sfn ${DATA_DIR} data
+  ln -sfn ${OUTPUT_DIR} output
+  uv run livekit-wakeword run configs/${CONFIG_FILE}
+  # Save artifacts into a workspace-scoped directory for separation
+  ARTIFACT_DIR=/outputs/${WORKSPACE}/${MODEL_NAME}
+  mkdir -p ${ARTIFACT_DIR}
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.weights.h5 ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}.tflite ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_int8.tflite ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_metrics.json ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_det.png ${ARTIFACT_DIR}/
+  cp ${OUTPUT_DIR}/${MODEL_NAME}/${MODEL_NAME}_eval.json ${ARTIFACT_DIR}/
+  cp configs/${CONFIG_FILE} ${ARTIFACT_DIR}/config.yaml
+
+envs:
+  WORKSPACE: livekit-embedded-wakeword
+  CONFIG_FILE: prod_inception.yaml
+  MODEL_NAME: hey_livekit_inception
+  DATA_DIR: ~/persistent/data
+  OUTPUT_DIR: ~/persistent/output

@@ -1,0 +1,105 @@
+# Model name — used for output directory and exported model filename
+model_name: hey_livekit_wakenet9
+
+# Wake word phrases to detect (include spelling variations)
+target_phrases: ["hey livekit"]
+
+# ============================================================================
+# Data Generation
+# ============================================================================
+
+# Training samples per class (positive + negative)
+# Suggestion: 5000-10000 for quick experiments, 20000+ for production
+n_samples: 25000
+
+# Validation samples per class
+# Suggestion: 10-20% of n_samples
+n_samples_val: 5000
+
+# VITS TTS batch size (higher = faster, but more VRAM)
+# Suggestion: 50 for 8GB GPU, 100+ for 16GB+
+tts_batch_size: 50
+
+# Adversarial negatives — phonetically similar phrases that should NOT trigger
+# Suggestion: add words that sound like your wake word, common misheard phrases
+custom_negative_phrases:
+  # Bare wake word without prefix — most common false trigger
+  - "livekit"
+  - "live kit"
+  # Phonetically similar prefixes
+  - "hey libby"
+  - "hey livid"
+  - "hey lidocaine"
+  - "hey liquid"
+  - "hey linux"
+  - "hey lyric"
+  # Partial/adjacent phrases
+  - "play live"
+  - "they live"
+  - "hey look at"
+  - "hey look it"
+
+# ============================================================================
+# TTS Parameters (VITS + SLERP speaker blending)
+# ============================================================================
+
+# Overall speech variability
+noise_scales: [0.98]
+
+# Phoneme duration variability
+noise_scale_ws: [0.98]
+
+# Speaking rate multipliers (slow / normal / fast)
+length_scales: [0.75, 1.0, 1.25]
+
+# SLERP interpolation weights for speaker blending (0=speaker1, 1=speaker2)
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+# ============================================================================
+# Paths
+# ============================================================================
+
+# Root data directory (models, backgrounds, RIRs downloaded here via `setup`)
+data_dir: ./data
+
+# Output directory for generated audio, features, checkpoints, and exported model
+output_dir: ./output
+
+# ============================================================================
+# Augmentation
+# ============================================================================
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+  window_size_ms: 30
+  window_step_ms: 20
+  num_channels: 40
+
+# ============================================================================
+# Model Architecture
+# ============================================================================
+
+model:
+  # WakeNet9-style 1D CNN with LiGLU blocks
+  model_type: wakenet9
+  model_size: xxlarge
+
+# ============================================================================
+# Training
+# ============================================================================
+
+steps: 100000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 1500
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  negative_speech: 128
