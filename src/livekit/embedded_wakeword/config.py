@@ -29,10 +29,8 @@ class ModelSize(StrEnum):
     xxlarge = "xxlarge"
 
 
-# Preset mapping: size -> (filters, n_blocks)
-# For inception: filters is base channel count, n_blocks is inception block count
-# For mixednet: filters is channel count, n_blocks is mixconv block count
-# For repcnn: filters is channel count, n_blocks is RepBlock count
+# Default preset mapping: size -> (filters, n_blocks)
+# Used by repcnn, mixednet, and wakenet9.
 MODEL_SIZE_PRESETS: dict[ModelSize, tuple[int, int]] = {
     ModelSize.tiny: (8, 2),
     ModelSize.small: (16, 3),
@@ -40,6 +38,19 @@ MODEL_SIZE_PRESETS: dict[ModelSize, tuple[int, int]] = {
     ModelSize.large: (32, 7),
     ModelSize.xlarge: (48, 9),
     ModelSize.xxlarge: (64, 11),
+}
+
+# Inception-specific presets: calibrated so each size tier produces a similar
+# TFLite model size as the default presets (~3KB to ~250KB).
+# Inception's 3-branch concat architecture has ~35x more params per filter/block
+# than RepCNN, so it needs fewer filters and blocks to reach the same size.
+INCEPTION_SIZE_PRESETS: dict[ModelSize, tuple[int, int]] = {
+    ModelSize.tiny: (4, 1),       # ~3 KB
+    ModelSize.small: (6, 1),      # ~9 KB
+    ModelSize.medium: (6, 3),     # ~24 KB
+    ModelSize.large: (8, 4),      # ~61 KB
+    ModelSize.xlarge: (10, 6),    # ~133 KB
+    ModelSize.xxlarge: (14, 6),   # ~256 KB
 }
 
 
@@ -61,12 +72,18 @@ class ModelConfig(BaseModel):
     model_size: ModelSize = ModelSize.small
 
     @property
+    def _presets(self) -> dict[ModelSize, tuple[int, int]]:
+        if self.model_type == ModelType.inception:
+            return INCEPTION_SIZE_PRESETS
+        return MODEL_SIZE_PRESETS
+
+    @property
     def filters(self) -> int:
-        return MODEL_SIZE_PRESETS[self.model_size][0]
+        return self._presets[self.model_size][0]
 
     @property
     def n_blocks(self) -> int:
-        return MODEL_SIZE_PRESETS[self.model_size][1]
+        return self._presets[self.model_size][1]
 
 
 class WakeWordConfig(BaseModel):

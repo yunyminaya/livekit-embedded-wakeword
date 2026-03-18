@@ -36,7 +36,7 @@ class WakeWordModel:
     and receive confidence scores. No internal audio state is maintained.
 
     Example usage:
-        from livekit.wakeword import WakeWordModel
+        from livekit.embedded_wakeword import WakeWordModel
 
         model = WakeWordModel(models=["path/to/model.tflite"])
 
@@ -207,7 +207,7 @@ class StreamingWakeWordModel:
             # Compute single frame
             spec = self._frontend(window)  # (1, 1, n_features)
             self._frame_buffer.append(spec[0, 0])
-            self._audio_buffer = self._audio_buffer[self._hop_samples:]
+            self._audio_buffer = self._audio_buffer[self._hop_samples :]
             new_frames_computed = True
 
         if not new_frames_computed or len(self._frame_buffer) < self._n_frames:

@@ -21,7 +21,7 @@ logging.basicConfig(
     format="%(message)s",
     handlers=[RichHandler(rich_tracebacks=True)],
 )
-logger = logging.getLogger("livekit.wakeword")
+logger = logging.getLogger("livekit.embedded_wakeword")
 
 
 @app.command()
@@ -130,8 +130,12 @@ def _download_microwakeword_features(features_dir: Path) -> None:
 
     # Training negatives get a raw_ prefix so _combine_negative_features
     # can merge them into a single speech_features.npy without self-collision.
-    _raw_prefix_zips = {"speech.zip", "no_speech.zip", "speech_background.zip",
-                        "no_speech_background.zip"}
+    _raw_prefix_zips = {
+        "speech.zip",
+        "no_speech.zip",
+        "speech_background.zip",
+        "no_speech_background.zip",
+    }
     feature_zips = [
         "speech.zip",
         "no_speech.zip",
@@ -374,9 +378,12 @@ def train(
     """Train classifier on extracted features (3-phase adaptive training)."""
     config = load_config(config_path)
 
+    from .config import ModelType
     from .utils import configure_gpu
 
-    configure_gpu()
+    configure_gpu(
+        disable_cudnn_autotune=config.model.model_type == ModelType.inception,
+    )
 
     logger.info(f"Training '{config.model_name}' model...")
     logger.info(f"Model: {config.model.model_type.value} ({config.model.model_size.value})")
@@ -447,9 +454,12 @@ def run(
     logger.info(f"Running full pipeline for '{config.model_name}'...")
 
     # Configure GPU before any TF imports to ensure memory growth is set
+    from .config import ModelType
     from .utils import configure_gpu
 
-    configure_gpu()
+    configure_gpu(
+        disable_cudnn_autotune=config.model.model_type == ModelType.inception,
+    )
 
     from .data.augment import run_augment
     from .data.features import run_extraction
@@ -461,6 +471,24 @@ def run(
     logger.info("Step 1/6: Generate synthetic data")
     run_generate(config)
 
+    # Free PyTorch GPU memory before TensorFlow training starts.
+    # PyTorch's CUDA context holds onto VRAM even after tensors are freed;
+    # without this, TF sees reduced VRAM and larger models OOM.
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+            # Force-delete the CUDA context so TF gets full VRAM
+            import gc
+
+            gc.collect()
+            torch.cuda.reset_peak_memory_stats()
+            logger.info("Cleared PyTorch CUDA cache")
+    except ImportError:
+        pass
+
     logger.info("Step 2/6: Augment clips")
     run_augment(config)
 
@@ -471,7 +499,7 @@ def run(
     run_train(config)
 
     logger.info("Step 5/6: Export to TFLite")
-    tflite_path = run_export(config)
+    tflite_path = run_export(config, quantize=True)
 
     logger.info("Step 6/6: Evaluate model")
     results = run_eval(config, tflite_path)

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from livekit.wakeword.inference.listener import (
+from livekit.embedded_wakeword.inference.listener import (
     CHUNK_FRAMES,
     WakeWordListener,
 )
@@ -150,9 +150,7 @@ async def test_buffer_cleared_after_detection():
 
     with _patch_pyaudio(stream):
         async with WakeWordListener(model, threshold=0.5, debounce=0.0) as listener:
-            detection = await asyncio.wait_for(
-                listener.wait_for_detection(), timeout=5.0
-            )
+            detection = await asyncio.wait_for(listener.wait_for_detection(), timeout=5.0)
             assert detection.name == "test"
             assert detection.confidence == pytest.approx(0.9)
             # Buffer should be empty after detection
@@ -185,9 +183,7 @@ async def test_loop_pauses_after_detection():
 
     with _patch_pyaudio(stream):
         async with WakeWordListener(model, threshold=0.5, debounce=0.0) as listener:
-            det1 = await asyncio.wait_for(
-                listener.wait_for_detection(), timeout=5.0
-            )
+            det1 = await asyncio.wait_for(listener.wait_for_detection(), timeout=5.0)
 
             # Give time for the loop to potentially queue more (it shouldn't)
             await asyncio.sleep(0.3)
@@ -196,9 +192,7 @@ async def test_loop_pauses_after_detection():
             )
 
             # Second call resumes listening and gets next detection
-            det2 = await asyncio.wait_for(
-                listener.wait_for_detection(), timeout=5.0
-            )
+            det2 = await asyncio.wait_for(listener.wait_for_detection(), timeout=5.0)
             assert det2.timestamp > det1.timestamp
 
 

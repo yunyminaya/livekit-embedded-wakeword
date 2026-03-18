@@ -12,7 +12,7 @@ from typing import TypedDict
 import numpy as np
 import tensorflow as tf
 
-from ..config import WakeWordConfig
+from ..config import ModelType, WakeWordConfig
 from ..data.dataset import create_tf_dataset
 from ..models.pipeline import WakeWordClassifier
 from ..utils import configure_gpu
@@ -87,7 +87,9 @@ class WakeWordTrainer:
     """
 
     def __init__(self, config: WakeWordConfig):
-        configure_gpu()
+        configure_gpu(
+            disable_cudnn_autotune=config.model.model_type == ModelType.inception,
+        )
         self.config = config
         self.model = WakeWordClassifier(config)
         # Build model with dummy input to initialize weights

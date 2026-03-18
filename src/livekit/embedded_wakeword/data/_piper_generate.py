@@ -216,9 +216,7 @@ def generate_samples(
                 # Consume texts for this batch (must happen even on failure to keep iterator in sync)
                 batch_texts = [next(texts_iter) for _ in range(current_batch_size)]
 
-                phoneme_ids = [
-                    get_phonemes(config, t, voice) for t in batch_texts
-                ]
+                phoneme_ids = [get_phonemes(config, t, voice) for t in batch_texts]
                 phoneme_lengths = [len(ids) for ids in phoneme_ids]
                 phoneme_ids = _right_pad_lists(phoneme_ids)
 
@@ -264,7 +262,9 @@ def generate_samples(
             consecutive_failures += 1
             logger.warning(
                 "Batch failed (texts=%r): %s. Skipping %d clips.",
-                batch_texts, e, current_batch_size,
+                batch_texts,
+                e,
+                current_batch_size,
             )
             # Advance sample_idx past this batch so we don't retry the same indices
             sample_idx += current_batch_size
@@ -273,8 +273,7 @@ def generate_samples(
             if consecutive_failures >= max_consecutive_failures:
                 pbar.close()
                 raise RuntimeError(
-                    f"{consecutive_failures} consecutive batches failed. "
-                    f"Last error: {e}"
+                    f"{consecutive_failures} consecutive batches failed. Last error: {e}"
                 ) from e
 
     pbar.close()
@@ -283,7 +282,10 @@ def generate_samples(
     if failed_batches > 0:
         logger.warning(
             "%d/%d batches failed — generated %d/%d clips",
-            failed_batches, failed_batches + len(generated), len(generated), expected,
+            failed_batches,
+            failed_batches + len(generated),
+            len(generated),
+            expected,
         )
 
     if len(generated) == 0 and expected > 0:
@@ -405,7 +407,9 @@ def remove_silence(
     # If VAD stripped too much, return the original — don't produce near-silent clips
     min_speech_samples = int(sample_rate * 0.15)  # at least 150ms of content
     if len(result) <= min_start + min_speech_samples:
-        logger.debug("VAD stripped too aggressively (%d samples left), keeping original", len(result))
+        logger.debug(
+            "VAD stripped too aggressively (%d samples left), keeping original", len(result)
+        )
         if x.dtype != np.int16:
             x = (x * 32767).astype(np.int16)
         return x

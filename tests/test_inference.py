@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from livekit.wakeword.config import WakeWordConfig
-from livekit.wakeword.models.pipeline import WakeWordClassifier
+from livekit.embedded_wakeword.config import WakeWordConfig
+from livekit.embedded_wakeword.models.pipeline import WakeWordClassifier
 
 
 class TestWakeWordClassifier:

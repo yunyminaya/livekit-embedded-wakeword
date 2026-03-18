@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from livekit.wakeword.config import (
+from livekit.embedded_wakeword.config import (
     MODEL_SIZE_PRESETS,
     ModelConfig,
     ModelSize,
@@ -34,7 +34,13 @@ def test_model_size_presets():
 
 
 def test_model_config_properties():
+    # Inception uses calibrated presets (smaller filters/blocks for same size tier)
     cfg = ModelConfig(model_type=ModelType.inception, model_size=ModelSize.medium)
+    assert cfg.filters == 6
+    assert cfg.n_blocks == 3
+
+    # Other architectures use default presets
+    cfg = ModelConfig(model_type=ModelType.repcnn, model_size=ModelSize.medium)
     assert cfg.filters == 24
     assert cfg.n_blocks == 5
 

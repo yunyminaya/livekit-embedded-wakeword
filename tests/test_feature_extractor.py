@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from livekit.wakeword.models.feature_extractor import MicroFrontend, compute_n_frames
+from livekit.embedded_wakeword.models.feature_extractor import MicroFrontend, compute_n_frames
 
 
 class TestMicroFrontend:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import tensorflow as tf
 
-from ..config import MODEL_SIZE_PRESETS, ModelSize, ModelType
+from ..config import INCEPTION_SIZE_PRESETS, MODEL_SIZE_PRESETS, ModelSize, ModelType
 
 
 class SubSpectralNormalization(tf.keras.layers.Layer):  # type: ignore[misc]
@@ -870,7 +870,8 @@ def build_classifier(
     Returns:
         Keras model: (batch, n_frames, n_features) → (batch, 1)
     """
-    filters, n_blocks = MODEL_SIZE_PRESETS[model_size]
+    presets = INCEPTION_SIZE_PRESETS if model_type == ModelType.inception else MODEL_SIZE_PRESETS
+    filters, n_blocks = presets[model_size]
 
     if model_type == ModelType.inception:
         # For inception: n_blocks is inception block count, add 2 CNN1 blocks

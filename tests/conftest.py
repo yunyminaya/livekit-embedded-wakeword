@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from livekit.wakeword.config import WakeWordConfig
+from livekit.embedded_wakeword.config import WakeWordConfig
 
 
 @pytest.fixture

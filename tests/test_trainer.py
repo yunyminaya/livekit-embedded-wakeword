@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from livekit.wakeword.training.metrics import (
+from livekit.embedded_wakeword.training.metrics import (
     accuracy,
     evaluate_model,
     false_positives_per_hour,
@@ -52,7 +52,7 @@ class TestMetrics:
 
 class TestDataset:
     def test_mmap_batch_generator(self, sample_features_file: Path):
-        from livekit.wakeword.data.dataset import mmap_batch_generator
+        from livekit.embedded_wakeword.data.dataset import mmap_batch_generator
 
         gen = mmap_batch_generator(
             data_files={"pos": sample_features_file, "neg": sample_features_file},

@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import tensorflow as tf
 
-from livekit.wakeword.config import ModelSize, ModelType
-from livekit.wakeword.models.classifier import (
+from livekit.embedded_wakeword.config import ModelSize, ModelType
+from livekit.embedded_wakeword.models.classifier import (
     InceptionClassifier,
     MixedNetClassifier,
     RepCNNClassifier,

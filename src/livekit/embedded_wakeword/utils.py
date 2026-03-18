@@ -22,14 +22,25 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def configure_gpu() -> None:
+def configure_gpu(*, disable_cudnn_autotune: bool = False) -> None:
     """Configure TensorFlow GPU/MPS memory growth if available.
 
     Must be called before any TensorFlow operations to take effect.
     Works with CUDA (Linux/Windows) and Metal/MPS (macOS via tensorflow-metal).
+
+    Args:
+        disable_cudnn_autotune: Disable cuDNN autotuning. Required for
+            Inception on certain GPUs (e.g. L40S) where autotuning fails
+            on the concat→1x1 conv backward pass.
     """
     try:
         import tensorflow as tf
+
+        if disable_cudnn_autotune:
+            import os
+
+            os.environ.setdefault("TF_CUDNN_USE_AUTOTUNE", "0")
+            logger.info("cuDNN autotuning disabled")
 
         gpus = tf.config.list_physical_devices("GPU")
         for gpu in gpus:

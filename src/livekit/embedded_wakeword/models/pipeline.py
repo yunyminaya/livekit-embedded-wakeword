@@ -30,7 +30,5 @@ class WakeWordClassifier(tf.keras.Model):  # type: ignore[misc]
             n_features=config.augmentation.num_channels,
         )
 
-    def call(
-        self, x: tf.Tensor, training: bool | None = None
-    ) -> tf.Tensor:
+    def call(self, x: tf.Tensor, training: bool | None = None) -> tf.Tensor:
         return self.classifier(x, training=training)

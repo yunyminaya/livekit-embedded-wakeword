@@ -3,8 +3,8 @@
 import asyncio
 from pathlib import Path
 
-from livekit.wakeword import WakeWordModel
-from livekit.wakeword.inference import WakeWordListener
+from livekit.embedded_wakeword import WakeWordModel
+from livekit.embedded_wakeword.inference import WakeWordListener
 
 model = WakeWordModel(models=[Path(__file__).parent / "resources" / "hey_livekit.onnx"])
 

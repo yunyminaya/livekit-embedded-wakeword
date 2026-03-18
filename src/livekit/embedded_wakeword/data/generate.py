@@ -17,11 +17,29 @@ logger = logging.getLogger(__name__)
 _ORIGINAL_CLIP_RE = re.compile(r"^clip_\d{6}\.wav$")
 
 # ARPAbet vowel phonemes (used to add optional stress markers in regex patterns)
-_VOWEL_PHONES = frozenset([
-    "AA", "AE", "AH", "AO", "AW", "AX", "AXR", "AY",
-    "EH", "ER", "EY", "IH", "IX", "IY",
-    "OW", "OY", "UH", "UW", "UX",
-])
+_VOWEL_PHONES = frozenset(
+    [
+        "AA",
+        "AE",
+        "AH",
+        "AO",
+        "AW",
+        "AX",
+        "AXR",
+        "AY",
+        "EH",
+        "ER",
+        "EY",
+        "IH",
+        "IX",
+        "IY",
+        "OW",
+        "OY",
+        "UH",
+        "UW",
+        "UX",
+    ]
+)
 
 
 def _get_cmudict() -> dict[str, list[str]]:
@@ -114,10 +132,7 @@ def _get_word_phonemes(word: str) -> list[str]:
         return []
     # Strip existing stress, then add optional stress for vowels
     phones = [re.sub(r"\d+", "", p) for p in raw[0].split()]
-    return [
-        p + "[0|1|2]" if p in _VOWEL_PHONES else p
-        for p in phones
-    ]
+    return [p + "[0|1|2]" if p in _VOWEL_PHONES else p for p in phones]
 
 
 def generate_adversarial_phrases(
@@ -185,7 +200,10 @@ def generate_adversarial_phrases(
                 for match in matches:
                     if match.lower() != word:
                         match_phones = pronouncing.phones_for_word(match)
-                        if match_phones and match_phones[0] != (pronouncing.phones_for_word(word) or [""])[0]:
+                        if (
+                            match_phones
+                            and match_phones[0] != (pronouncing.phones_for_word(word) or [""])[0]
+                        ):
                             adversarial_words.append(match)
 
             # Build adversarial phrases by replacing the current word
@@ -244,15 +262,13 @@ def synthesize_clips(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cmu = _get_cmudict()
-    phrases = [
-        " ".join(_expand_unknown_words(p.lower().split(), cmu)) for p in phrases
-    ]
+    phrases = [" ".join(_expand_unknown_words(p.lower().split(), cmu)) for p in phrases]
 
     if vits_model_path is None or not vits_model_path.exists():
         raise FileNotFoundError(
             f"VITS model not found at {vits_model_path}. "
             "Cannot generate audio — refusing to produce silent placeholders. "
-            "Download the model first: python -m livekit.wakeword.data setup"
+            "Download the model first: python -m livekit.embedded_wakeword.data setup"
         )
 
     generated = generate_samples(
@@ -284,7 +300,7 @@ def run_generate(config: WakeWordConfig) -> None:
     if not vits_path.exists():
         raise FileNotFoundError(
             f"VITS model not found at {vits_path}. "
-            "Run setup first: python -m livekit.wakeword.data setup"
+            "Run setup first: python -m livekit.embedded_wakeword.data setup"
         )
 
     synth_kwargs: dict[str, Any] = {
@@ -307,13 +323,17 @@ def run_generate(config: WakeWordConfig) -> None:
         if existing >= n_target:
             logger.info(
                 "Split %s already complete (%d/%d clips), skipping",
-                split_name, existing, n_target,
+                split_name,
+                existing,
+                n_target,
             )
             continue
         if existing > 0:
             logger.info(
                 "Resuming split %s from clip %d / %d",
-                split_name, existing, n_target,
+                split_name,
+                existing,
+                n_target,
             )
         else:
             logger.info("Generating %d %s clips...", n_target, split_name)
@@ -359,13 +379,17 @@ def run_generate(config: WakeWordConfig) -> None:
             if existing >= n_target:
                 logger.info(
                     "Split %s already complete (%d/%d clips), skipping",
-                    split_name, existing, n_target,
+                    split_name,
+                    existing,
+                    n_target,
                 )
                 continue
             if existing > 0:
                 logger.info(
                     "Resuming split %s from clip %d / %d",
-                    split_name, existing, n_target,
+                    split_name,
+                    existing,
+                    n_target,
                 )
             else:
                 logger.info("Synthesizing %d %s clips...", n_target, split_name)
@@ -378,4 +402,3 @@ def run_generate(config: WakeWordConfig) -> None:
                 start_index=existing,
                 **synth_kwargs,
             )
-

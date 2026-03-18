@@ -67,13 +67,13 @@ Repository = "https://github.com/livekit/livekit-wakeword"
 Issues = "https://github.com/livekit/livekit-wakeword/issues"
 
 [project.scripts]
-livekit-wakeword = "livekit.wakeword.cli:app"
+livekit-wakeword = "livekit.embedded_wakeword.cli:app"
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/livekit/wakeword/_version.py"
+version-file = "src/livekit/embedded_wakeword/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/livekit"]
@@ -83,7 +83,7 @@ packages = ["src/livekit"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/livekit/wakeword/**/*.py",
+    "src/livekit/embedded_wakeword/**/*.py",
 ]
 
 [dependency-groups]

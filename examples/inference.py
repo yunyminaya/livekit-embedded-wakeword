@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from livekit.wakeword import WakeWordModel
+from livekit.embedded_wakeword import WakeWordModel
 
 # Load model
 model = WakeWordModel(models=[Path(__file__).parent / "resources" / "hey_livekit.onnx"])

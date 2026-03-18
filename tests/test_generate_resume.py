@@ -11,7 +11,7 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch required for data generation tests")
 
-from livekit.wakeword.data.generate import _count_original_clips, synthesize_clips  # noqa: E402
+from livekit.embedded_wakeword.data.generate import _count_original_clips, synthesize_clips  # noqa: E402
 
 
 class TestCountOriginalClips:

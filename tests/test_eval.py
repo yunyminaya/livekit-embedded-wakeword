@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from livekit.wakeword.eval.evaluate import (
+from livekit.embedded_wakeword.eval.evaluate import (
     _compute_aut,
     _compute_det_curve,
     _predict_tflite,

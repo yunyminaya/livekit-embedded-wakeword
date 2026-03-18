@@ -40,7 +40,7 @@ class WakeWordListener:
     ``wait_for_detection()`` again.
 
     Example:
-        from livekit.wakeword import WakeWordModel, WakeWordListener
+        from livekit.embedded_wakeword import WakeWordModel, WakeWordListener
 
         model = WakeWordModel(models=["hey_livekit.tflite"])
 
@@ -195,9 +195,7 @@ class WakeWordListener:
                             self._frame_buffer.clear()
 
                             await self._detection_queue.put(
-                                Detection(
-                                    name=name, confidence=score, timestamp=now
-                                )
+                                Detection(name=name, confidence=score, timestamp=now)
                             )
                             break  # one detection per iteration
         except asyncio.CancelledError:
@@ -243,8 +241,6 @@ class WakeWordListener:
             return self._detection_queue.get_nowait()
 
         if self._error is not None:
-            raise RuntimeError(
-                f"Audio loop crashed: {self._error}"
-            ) from self._error
+            raise RuntimeError(f"Audio loop crashed: {self._error}") from self._error
 
         raise RuntimeError("Audio loop ended unexpectedly")

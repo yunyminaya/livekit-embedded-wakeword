@@ -238,9 +238,7 @@ class MicroFrontend:
             padded = []
             for f in results:
                 if f.shape[0] < max_frames:
-                    pad = np.zeros(
-                        (max_frames - f.shape[0], self.num_channels), dtype=np.float32
-                    )
+                    pad = np.zeros((max_frames - f.shape[0], self.num_channels), dtype=np.float32)
                     f = np.concatenate([pad, f], axis=0)
                 padded.append(f)
             return np.stack(padded, axis=0)
