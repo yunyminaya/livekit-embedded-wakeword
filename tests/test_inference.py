@@ -32,3 +32,22 @@ class TestWakeWordClassifier:
         out2 = model2(sample_spectrogram, training=False)
 
         np.testing.assert_allclose(out1.numpy(), out2.numpy(), atol=1e-5)
+
+    def test_spec_augment_masks_during_training(self):
+        """SpecAugment should zero out some values during training but not inference."""
+        import tensorflow as tf
+
+        from livekit.embedded_wakeword.models.pipeline import SpecAugment
+
+        # Large min masks guarantee zeroed regions regardless of randomness
+        layer = SpecAugment(time_masks=1, time_mask_max=99, freq_masks=1, freq_mask_max=40)
+        x = tf.ones((2, 99, 40))
+
+        # Inference: no masking
+        out_infer = layer(x, training=False)
+        assert float(tf.reduce_min(out_infer)) == 1.0
+
+        # Training: must have zeros — masks span the full axis
+        out_train = layer(x, training=True)
+        n_zeros = int(tf.reduce_sum(tf.cast(out_train == 0, tf.int32)))
+        assert n_zeros > 0, "SpecAugment did not mask any values"
