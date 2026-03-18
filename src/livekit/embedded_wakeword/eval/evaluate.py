@@ -216,26 +216,36 @@ def run_eval(config: WakeWordConfig, model_path: str | Path) -> dict[str, float]
     # Compute AUT
     aut = _compute_aut(fpr, fnr)
 
-    # Compute summary metrics at fixed threshold 0.5
+    # Compute metrics at fixed threshold 0.5 and find optimal threshold
     clip_duration = config.augmentation.clip_duration
     validation_hours = neg_features.shape[0] * clip_duration / 3600.0
 
-    from ..training.metrics import evaluate_model
+    from ..training.metrics import evaluate_model, find_best_threshold
 
-    optimal = evaluate_model(
+    fixed = evaluate_model(
         pos_scores,
         neg_scores,
         threshold=0.5,
         validation_hours=validation_hours,
     )
+    optimal = find_best_threshold(
+        pos_scores,
+        neg_scores,
+        validation_hours=validation_hours,
+        target_fpph=config.target_fp_per_hour,
+    )
 
     # Build results
     results = {
         "aut": aut,
-        "fpph": optimal["fpph"],
-        "recall": optimal["recall"],
-        "accuracy": optimal["accuracy"],
-        "threshold": optimal["threshold"],
+        "fpph": fixed["fpph"],
+        "recall": fixed["recall"],
+        "accuracy": fixed["accuracy"],
+        "threshold": fixed["threshold"],
+        "optimal_fpph": optimal["fpph"],
+        "optimal_recall": optimal["recall"],
+        "optimal_accuracy": optimal["accuracy"],
+        "optimal_threshold": optimal["threshold"],
         "n_positive": int(pos_features.shape[0]),
         "n_negative": int(neg_features.shape[0]),
         "validation_hours": round(validation_hours, 2),
