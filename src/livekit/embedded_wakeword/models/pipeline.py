@@ -40,37 +40,29 @@ class SpecAugment(tf.keras.layers.Layer):  # type: ignore[misc]
         n_frames = shape[1]
         n_freq = shape[2]
 
+        # Use index-based masking (XLA-compatible: no dynamic-shaped tensors)
+        time_idx = tf.range(n_frames)  # (n_frames,)
+        freq_idx = tf.range(n_freq)  # (n_freq,)
+
         mask = tf.ones_like(x)
 
         for _ in range(self.time_masks):
             t_len = tf.random.uniform([], 1, self.time_mask_max + 1, dtype=tf.int32)
             t_len = tf.minimum(t_len, n_frames)
             t_start = tf.random.uniform([], 0, n_frames - t_len + 1, dtype=tf.int32)
-            # Zero out [t_start, t_start + t_len) across all frequencies
-            time_mask = tf.concat(
-                [
-                    tf.ones([1, t_start, n_freq]),
-                    tf.zeros([1, t_len, n_freq]),
-                    tf.ones([1, n_frames - t_start - t_len, n_freq]),
-                ],
-                axis=1,
-            )
-            mask = mask * time_mask
+            # Boolean mask: True where index is outside [t_start, t_start + t_len)
+            keep = (time_idx < t_start) | (time_idx >= t_start + t_len)
+            # Reshape to (1, n_frames, 1) for broadcasting
+            mask = mask * tf.cast(keep[None, :, None], x.dtype)
 
         for _ in range(self.freq_masks):
             f_len = tf.random.uniform([], 1, self.freq_mask_max + 1, dtype=tf.int32)
             f_len = tf.minimum(f_len, n_freq)
             f_start = tf.random.uniform([], 0, n_freq - f_len + 1, dtype=tf.int32)
-            # Zero out [f_start, f_start + f_len) across all time frames
-            freq_mask = tf.concat(
-                [
-                    tf.ones([1, n_frames, f_start]),
-                    tf.zeros([1, n_frames, f_len]),
-                    tf.ones([1, n_frames, n_freq - f_start - f_len]),
-                ],
-                axis=2,
-            )
-            mask = mask * freq_mask
+            # Boolean mask: True where index is outside [f_start, f_start + f_len)
+            keep = (freq_idx < f_start) | (freq_idx >= f_start + f_len)
+            # Reshape to (1, 1, n_freq) for broadcasting
+            mask = mask * tf.cast(keep[None, None, :], x.dtype)
 
         return x * mask
 

@@ -51,3 +51,22 @@ class TestWakeWordClassifier:
         out_train = layer(x, training=True)
         n_zeros = int(tf.reduce_sum(tf.cast(out_train == 0, tf.int32)))
         assert n_zeros > 0, "SpecAugment did not mask any values"
+
+    def test_spec_augment_xla_compatible(self):
+        """SpecAugment must compile under XLA (jit_compile=True)."""
+        import tensorflow as tf
+
+        from livekit.embedded_wakeword.models.pipeline import SpecAugment
+
+        layer = SpecAugment()
+        x = tf.ones((2, 99, 40))
+
+        @tf.function(jit_compile=True)
+        def apply_augment(inputs: tf.Tensor) -> tf.Tensor:
+            return layer(inputs, training=True)
+
+        out = apply_augment(x)
+        assert out.shape == (2, 99, 40)
+        # Verify masking actually happened
+        n_zeros = int(tf.reduce_sum(tf.cast(out == 0, tf.int32)))
+        assert n_zeros > 0, "SpecAugment did not mask any values under XLA"
