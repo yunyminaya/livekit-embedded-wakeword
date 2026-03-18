@@ -2,7 +2,7 @@
 
 Feature extraction converts augmented audio clips into fixed-size spectrogram arrays using the TFLite Micro microfrontend — the same C library used on-device by ESPHome's `micro_wake_word` component.
 
-**Source:** `src/livekit/wakeword/data/features.py`, `src/livekit/wakeword/models/feature_extractor.py`
+**Source:** `src/livekit/embedded_wakeword/data/features.py`, `src/livekit/embedded_wakeword/models/feature_extractor.py`
 
 ## Overview
 
@@ -24,7 +24,7 @@ Save as .npy
 
 ## MicroFrontend
 
-**Source:** `src/livekit/wakeword/models/feature_extractor.py`
+**Source:** `src/livekit/embedded_wakeword/models/feature_extractor.py`
 
 Computes spectrogram features using the TFLite Micro microfrontend, matching microWakeWord's training pipeline and the on-device ESPHome implementation exactly.
 
@@ -158,7 +158,7 @@ Audio files are read via `soundfile`, converted to float32, reduced to mono if s
 
 ## Memory-Mapped Dataset
 
-**Source:** `src/livekit/wakeword/data/dataset.py`
+**Source:** `src/livekit/embedded_wakeword/data/dataset.py`
 
 The training pipeline loads `.npy` features via memory mapping for efficient access without loading entire arrays into memory.
 

@@ -2,7 +2,7 @@
 
 The export stage converts the trained TensorFlow/Keras classifier to TFLite for deployment. The inference API provides `WakeWordModel` for stateless prediction, `StreamingWakeWordModel` for incremental processing, and `WakeWordListener` for async microphone detection.
 
-**Source:** `src/livekit/wakeword/export/tflite.py`, `src/livekit/wakeword/inference/model.py`, `src/livekit/wakeword/inference/listener.py`
+**Source:** `src/livekit/embedded_wakeword/export/tflite.py`, `src/livekit/embedded_wakeword/inference/model.py`, `src/livekit/embedded_wakeword/inference/listener.py`
 **CLI:** `livekit-wakeword export <config>`
 
 ## TFLite Export
@@ -18,6 +18,8 @@ The export stage converts the trained TensorFlow/Keras classifier to TFLite for 
 | Format | FlatBuffers (`.tflite`) |
 
 The converter creates a concrete function with a fixed input shape for optimal TFLite compatibility.
+
+**RepCNN reparameterization:** For `model_type: repcnn`, the export step calls `reparameterize_model()` before conversion. This fuses the multi-branch depthwise training blocks (3×3 dilated + 1×1 + identity) into single DW-Conv + PW-Conv pairs with no BatchNormalization layers, producing a compact model optimized for ESP32-S3 SIMD inference.
 
 ### INT8 Quantization
 
@@ -38,14 +40,14 @@ livekit-wakeword export configs/hey_livekit.yaml --quantize
 
 ## Inference API
 
-**Source:** `src/livekit/wakeword/inference/model.py`, `src/livekit/wakeword/inference/listener.py`
+**Source:** `src/livekit/embedded_wakeword/inference/model.py`, `src/livekit/embedded_wakeword/inference/listener.py`
 
 ### WakeWordModel
 
 The `WakeWordModel` class is a stateless prediction API for wake word detection. Pass a complete audio window (~2 seconds) and receive confidence scores.
 
 ```python
-from livekit.wakeword import WakeWordModel
+from livekit.embedded_wakeword import WakeWordModel
 
 model = WakeWordModel(models=["hey_livekit.tflite"])
 
@@ -82,7 +84,7 @@ The `MicroFrontend` spectrogram extractor is created automatically — no extern
 The `StreamingWakeWordModel` class processes audio incrementally, maintaining a ring buffer of spectrogram frames.
 
 ```python
-from livekit.wakeword.inference.model import StreamingWakeWordModel
+from livekit.embedded_wakeword.inference.model import StreamingWakeWordModel
 
 model = StreamingWakeWordModel("hey_livekit.tflite")
 
@@ -115,7 +117,7 @@ The `WakeWordListener` class provides async microphone detection with debouncing
 
 ```python
 import asyncio
-from livekit.wakeword import WakeWordModel, WakeWordListener
+from livekit.embedded_wakeword import WakeWordModel, WakeWordListener
 
 model = WakeWordModel(models=["hey_livekit.tflite"])
 

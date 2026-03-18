@@ -2,7 +2,7 @@
 
 The generation stage synthesizes positive and negative audio clips using VITS TTS with SLERP speaker blending and phoneme-based adversarial phrase generation.
 
-**Source:** `src/livekit/wakeword/data/generate.py`, `src/livekit/wakeword/data/_piper_generate.py`
+**Source:** `src/livekit/embedded_wakeword/data/generate.py`, `src/livekit/embedded_wakeword/data/_piper_generate.py`
 **CLI:** `livekit-wakeword generate <config>`
 
 **System dependency:** `espeak-ng` must be installed for phonemization (`brew install espeak-ng` on macOS, `apt install espeak-ng` on Linux).

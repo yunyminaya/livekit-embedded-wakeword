@@ -1,10 +1,10 @@
 # Architecture Overview
 
-livekit-wakeword uses a microWakeWord-based architecture. The TFLite Micro microfrontend (via `pymicro-features`) computes spectrogram features that feed into TensorFlow/Keras CNN classifiers (Inception or MixedNet), which are exported to TFLite for lightweight streaming inference.
+livekit-embedded-wakeword is a flavor of livekit-wakeword optimized for training micro wake word models for embedded devices. It uses a microWakeWord-based architecture: the TFLite Micro microfrontend (via `pymicro-features`) computes spectrogram features that feed into TensorFlow/Keras CNN classifiers (Inception, MixedNet, RepCNN, or WakeNet9), which are exported to TFLite for lightweight streaming inference on targets like ESP32-S3.
 
 ## System Architecture
 
-**Training Pipeline:** Synthetic speech is generated via VITS TTS with SLERP speaker blending, augmented with noise/reverb, then processed through a numpy-based spectrogram frontend to produce `.npy` feature files. These features train an Inception or MixedNet CNN classifier, which is saved as Keras weights (`.weights.h5`).
+**Training Pipeline:** Synthetic speech is generated via VITS TTS with SLERP speaker blending, augmented with noise/reverb, then processed through a numpy-based spectrogram frontend to produce `.npy` feature files. These features train one of four CNN classifiers (Inception, MixedNet, RepCNN, or WakeNet9), which is saved as Keras weights (`.weights.h5`).
 
 **Inference Pipeline:** Raw 16kHz audio flows through the same spectrogram frontend (40-channel log-mel, 30ms window, 20ms hop), then through the trained classifier (exported to TFLite) to produce a detection score between 0 and 1.
 
@@ -52,12 +52,12 @@ N_frames = floor((32000 - 480) / 320) + 1 = 99 frames
 ## Module Map
 
 ```
-src/livekit/wakeword/
+src/livekit/embedded_wakeword/
 ├── config.py                    Pydantic config models + YAML loading
 ├── cli.py                       Typer CLI (setup, generate, augment, train, export, eval, run)
 ├── models/
 │   ├── feature_extractor.py     MicroFrontend (TFLite Micro microfrontend via pymicro-features)
-│   ├── classifier.py            InceptionClassifier, MixedNetClassifier, SubSpectralNorm
+│   ├── classifier.py            InceptionClassifier, MixedNetClassifier, RepCNNClassifier, WakeNet9Classifier
 │   └── pipeline.py              WakeWordClassifier (Keras training wrapper)
 ├── data/
 │   ├── generate.py              VITS TTS + SLERP speaker blending + adversarial negatives

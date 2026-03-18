@@ -2,7 +2,7 @@
 
 The evaluation stage runs the exported TFLite model against held-out validation data and produces a DET (Detection Error Tradeoff) curve, AUT score, and summary metrics.
 
-**Source:** `src/livekit/wakeword/eval/evaluate.py`
+**Source:** `src/livekit/embedded_wakeword/eval/evaluate.py`
 **CLI:** `livekit-wakeword eval <config>` or as step 6/6 of `livekit-wakeword run`
 
 ## Overview
@@ -46,8 +46,8 @@ If `--model` is not specified, the default path `output/<model_name>/<model_name
 
 ```python
 from pathlib import Path
-from livekit.wakeword import load_config
-from livekit.wakeword.eval.evaluate import run_eval
+from livekit.embedded_wakeword import load_config
+from livekit.embedded_wakeword.eval.evaluate import run_eval
 
 config = load_config("configs/hey_livekit.yaml")
 model_path = Path("output/hey_livekit/hey_livekit.tflite")

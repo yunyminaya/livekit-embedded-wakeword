@@ -2,7 +2,7 @@
 
 The augmentation stage applies realistic audio transformations to synthetic TTS clips and aligns them within detection windows.
 
-**Source:** `src/livekit/wakeword/data/augment.py`
+**Source:** `src/livekit/embedded_wakeword/data/augment.py`
 **CLI:** `livekit-wakeword augment <config>`
 
 ## Overview

@@ -2,28 +2,29 @@
   <img src="https://raw.githubusercontent.com/livekit/livekit-wakeword/main/.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
 </a>
 
-# livekit-wakeword
+# LiveKit Embedded Wakeword
 
-[![CI](https://github.com/livekit/livekit-wakeword/actions/workflows/ci.yml/badge.svg)](https://github.com/livekit/livekit-wakeword/actions/workflows/ci.yml)
+> **Note:** This is an experimental repository. APIs and architectures may change without notice.
+
+[![CI](https://github.com/livekit/livekit-embedded-wakeword/actions/workflows/ci.yml/badge.svg)](https://github.com/livekit/livekit-embedded-wakeword/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.1-green)](https://github.com/livekit/livekit-wakeword)
 
-An open-source wake word library for creating voice-enabled applications. Based on [openWakeWord](https://github.com/dscripka/openWakeWord) with streamlined training — generate synthetic data, augment, train, and export from a single YAML config.
+LiveKit Embedded Wakeword is a flavor of [livekit-wakeword](https://github.com/livekit/livekit-wakeword) optimized for training micro wake word models for embedded devices (ESP32-S3, microcontrollers). It uses a microWakeWord-based architecture — TFLite Micro microfrontend features feed directly into lightweight CNN classifiers, exported to TFLite for on-device inference.
 
 **Features:**
 
-- **Conv-Attention classifier** — 1D temporal convolutions + multi-head self-attention replace openWakeWord's flat DNN head, preserving temporal structure across the 16-frame embedding window for better accuracy and fewer false positives (see [comparison](#openwakeword-vs-livekit-wakeword) below)
-- **Backward compatible** with openWakeWord models and library
-- **Train anywhere** — local machine, cloud, or spawn [SkyPilot](https://github.com/skypilot-org/skypilot) jobs
-- **Zero dependency headaches** — uv handles everything
+- **Four classifier architectures** — Inception (multi-branch CNN), MixedNet (multi-kernel DW conv + SE attention), RepCNN (RepVGG-style with branch fusion), and WakeNet9 (1D CNN + LiGLU blocks)
+- **TFLite Micro compatible** — uses the same `pymicro-features` spectrogram frontend as ESPHome's on-device implementation
+- **Tiny models** — from ~3 KB (tiny) to ~256 KB (xxlarge), with INT8 quantization for further size reduction
+- **Train on any platform TensorFlow supports** — local CPU/GPU or spawn [SkyPilot](https://github.com/skypilot-org/skypilot) jobs on cloud GPUs
+- **End-to-end pipeline** — generate synthetic data, augment, train, export, and evaluate from a single YAML config
 
 **Quick Links:**
 
 - [Using Existing Models](#using-existing-models-and-library)
 - [Training New Models Using The CLI](#training-new-models-using-the-cli)
 - [Training New Models Using The Python API](#training-new-models-using-the-python-api)
-- [openWakeWord vs livekit-wakeword](#openwakeword-vs-livekit-wakeword)
 
 ## Quick Start
 
@@ -56,11 +57,11 @@ pip install livekit-wakeword[listener]
 **Basic inference:**
 
 ```python
-from livekit.wakeword import WakeWordModel
+from livekit.embedded_wakeword import WakeWordModel
 
-model = WakeWordModel(models=["hey_livekit.onnx"])
+model = WakeWordModel(models=["hey_livekit.tflite"])
 
-# Feed audio frames (16kHz, int16 or float32)
+# Feed ~2 seconds of 16kHz audio
 scores = model.predict(audio_frame)
 if scores["hey_livekit"] > 0.5:
     print("Wake word detected!")
@@ -70,9 +71,9 @@ if scores["hey_livekit"] > 0.5:
 
 ```python
 import asyncio
-from livekit.wakeword import WakeWordModel, WakeWordListener
+from livekit.embedded_wakeword import WakeWordModel, WakeWordListener
 
-model = WakeWordModel(models=["hey_livekit.onnx"])
+model = WakeWordModel(models=["hey_livekit.tflite"])
 
 async def main():
     async with WakeWordListener(model, threshold=0.5, debounce=2.0) as listener:
@@ -114,8 +115,8 @@ uv tool install livekit-wakeword[train,eval,export]
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and install
-git clone https://github.com/livekit/livekit-wakeword
-cd livekit-wakeword
+git clone https://github.com/livekit/livekit-embedded-wakeword
+cd livekit-embedded-wakeword
 uv sync --all-extras
 ```
 
@@ -128,58 +129,64 @@ livekit-wakeword setup
 **Train a wake word:**
 
 ```bash
-livekit-wakeword run configs/hey_livekit.yaml
+livekit-wakeword run configs/prod_inception.yaml
 ```
 
 Or run stages individually:
 
 ```bash
-livekit-wakeword generate configs/hey_livekit.yaml  # TTS synthesis + adversarial negatives
-livekit-wakeword augment configs/hey_livekit.yaml   # Augment + extract features
-livekit-wakeword train configs/hey_livekit.yaml     # 3-phase adaptive training
-livekit-wakeword export configs/hey_livekit.yaml    # Export to ONNX
-livekit-wakeword eval configs/hey_livekit.yaml      # Evaluate model (DET curve, AUT, FPPH)
+livekit-wakeword generate configs/prod_inception.yaml  # TTS synthesis + adversarial negatives
+livekit-wakeword augment configs/prod_inception.yaml   # Augment + extract spectrogram features
+livekit-wakeword train configs/prod_inception.yaml     # 3-phase adaptive training
+livekit-wakeword export configs/prod_inception.yaml    # Export to TFLite (+ INT8 quantization)
+livekit-wakeword eval configs/prod_inception.yaml      # Evaluate model (DET curve, AUT, FPPH)
 ```
-
-You can also evaluate any compatible ONNX model (e.g., one trained with openWakeWord):
-
-```bash
-livekit-wakeword eval configs/hey_livekit.yaml -m /path/to/other_model.onnx
-```
-
-Eval produces a DET curve plot and metrics JSON in the output directory. See [Evaluation](docs/evaluation.md) for details.
 
 **Config:**
 
-See [configs/hey_livekit.yaml](configs/hey_livekit.yaml) for all options.
+Per-architecture production configs are provided in `configs/`:
+
+- `configs/prod_inception.yaml` — Inception CNN + SubSpectralNorm
+- `configs/prod_repcnn.yaml` — RepCNN (recommended for ESP32-S3)
+- `configs/prod_mixednet.yaml` — MixedNet + SE attention
+- `configs/prod_wakenet9.yaml` — WakeNet9 (1D CNN + LiGLU)
 
 ```yaml
-model_name: hey_livekit
+model_name: hey_livekit_inception
 target_phrases:
   - "hey livekit"
 
-n_samples: 10000 # training samples per class
+n_samples: 25000
 model:
-  model_type: conv_attention # conv_attention, dnn, or rnn
-  model_size: small # tiny, small, medium, large
-steps: 50000
-target_fp_per_hour: 0.2
+  model_type: inception  # inception, repcnn, mixednet, or wakenet9
+  model_size: xxlarge    # tiny, small, medium, large, xlarge, xxlarge
+steps: 100000
+max_negative_weight: 1500
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  negative_speech: 128
 ```
 
 **Train on cloud GPUs with SkyPilot:**
 
-See [skypilot/train.yaml](skypilot/train.yaml) for SkyPilot's example training job on Nebius.
+Per-architecture SkyPilot configs are in `skypilot/`:
 
 ```bash
-sky launch skypilot/train.yaml
+sky launch skypilot/train_inception.yaml
+sky launch skypilot/train_repcnn.yaml
+sky launch skypilot/train_mixednet.yaml
+sky launch skypilot/train_wakenet9.yaml
 ```
 
 ### Training New Models Using The Python API
 
-The full training pipeline is available as a Python API, so you can import and drive it from your own code instead of using the CLI:
+The full training pipeline is available as a Python API:
 
 ```python
-from livekit.wakeword import (
+from livekit.embedded_wakeword import (
     WakeWordConfig,
     load_config,
     run_generate,
@@ -191,7 +198,7 @@ from livekit.wakeword import (
 )
 
 # Load from YAML or construct directly
-config = load_config("configs/hey_livekit.yaml")
+config = load_config("configs/prod_inception.yaml")
 
 # Or build a config programmatically
 config = WakeWordConfig(
@@ -204,101 +211,27 @@ config = WakeWordConfig(
 # Run individual stages
 run_generate(config)     # TTS synthesis + adversarial negatives
 run_augment(config)      # Add noise, reverb, pitch shifts
-run_extraction(config)   # Extract mel spectrograms + speech embeddings → .npy
+run_extraction(config)   # Extract spectrogram features → .npy
 run_train(config)        # 3-phase adaptive training
-onnx_path = run_export(config)       # Export to ONNX
+tflite_path = run_export(config)  # Export to TFLite
 
 # Evaluate the exported model
-results = run_eval(config, onnx_path)
+results = run_eval(config, tflite_path)
 print(f"AUT={results['aut']:.4f}  FPPH={results['fpph']:.2f}  Recall={results['recall']:.1%}")
 ```
 
-This is useful for integrating wake word training into larger pipelines, automating model iteration, or building custom tooling on top of the data generation and training stages.
+## microWakeWord Compatibility
 
-## openWakeWord vs livekit-wakeword
-
-Both libraries share the same audio front-end: mel spectrograms are fed through frozen [Google speech embedding](https://github.com/google-research/google-research/tree/master/embedding_fns) and [openWakeWord embedding](https://github.com/dscripka/openWakeWord) models to produce a `(16, 96)` feature matrix (16 timesteps × 96-dim embeddings). The difference is the classification head that sits on top.
-
-### Architecture
-
-**openWakeWord** flattens the `(16, 96)` matrix into a 1536-d vector and feeds it through a small fully-connected DNN:
-
-```
-Flatten(16×96=1536) → Dense → Dense → Sigmoid
-```
-
-While the positional information is technically still present in the flattened vector, the dense layer has no inductive bias for temporal structure and must learn any sequential patterns from scratch.
-
-**livekit-wakeword** introduces a **Conv-Attention** (`conv_attention`) classifier:
-
-```
-Conv1D blocks → MultiheadAttention → Mean pool → Linear(1) → Sigmoid
-```
-
-1. **1D Convolutions** (kernel size 3) slide across the 16 timesteps, capturing local temporal patterns (e.g., syllable transitions).
-2. **Multi-Head Self-Attention** models long-range dependencies across the full temporal window, letting the model learn which timestep relationships matter.
-3. **Mean pooling** aggregates attended features into a fixed-size vector for the final sigmoid output.
-
-### Results
-
-To compare, we evaluated an openWakeWord DNN, a livekit-wakeword DNN (same architecture, better training pipeline), and a livekit-wakeword conv-attention model on the same "hey livekit" validation set (15,000 positive clips, 45,084 negative clips, 25 hours of audio). The livekit-wakeword models were trained with the [prod config](configs/prod.yaml).
-
-| Metric | openWakeWord (DNN) | livekit-wakeword (DNN) | livekit-wakeword (conv-attention) |
-|--------|:---:|:---:|:---:|
-| **AUT*** | 0.0720 | 0.0423 | **0.0012** |
-| **FPPH*** | 8.50 | 3.07 | **0.08** |
-| **Recall*** | 68.6% | 85.3% | **86.1%** |
-| Optimal Threshold* | 0.01 | 0.01 | 0.68 |
-
-<table>
-<tr>
-<td align="center"><strong>openWakeWord (DNN)</strong></td>
-<td align="center"><strong>livekit-wakeword (DNN)</strong></td>
-<td align="center"><strong>livekit-wakeword (conv-attention)</strong></td>
-</tr>
-<tr>
-<td><img src="https://raw.githubusercontent.com/livekit/livekit-wakeword/main/.github/assets/det_openwakeword.png" alt="DET curve — openWakeWord" width="280"></td>
-<td><img src="https://raw.githubusercontent.com/livekit/livekit-wakeword/main/.github/assets/det_livekit_wakeword_dnn.png" alt="DET curve — livekit-wakeword DNN" width="280"></td>
-<td><img src="https://raw.githubusercontent.com/livekit/livekit-wakeword/main/.github/assets/det_livekit_wakeword.png" alt="DET curve — livekit-wakeword conv-attention" width="280"></td>
-</tr>
-</table>
-
-The livekit-wakeword DNN already outperforms openWakeWord's DNN thanks to the improved training pipeline (focal loss, embedding mixup, 3-phase training, checkpoint averaging). However, both DNN models fail to meet the FPPH target — their optimal thresholds fall to 0.01, meaning no operating point can keep false positives low enough.
-
-The conv-attention head is what unlocks the low false positive rate: **60x lower AUT** and **100x fewer false positives per hour** than openWakeWord, while detecting 17% more wake words.
-
-*\***AUT** (Area Under the DET curve) — summarizes the full DET (Detection Error Tradeoff) curve, which plots false positive rate vs false negative rate across all thresholds. Lower is better (0 = perfect). A DET curve that hugs the bottom-left corner indicates strong separation between wake words and non-wake-words.*
-
-*\***FPPH** (False Positives Per Hour) — how many times the model falsely triggers per hour of non-wake-word audio. Lower is better. For production use, < 0.5 FPPH is typical.*
-
-*\***Recall** — the percentage of actual wake words correctly detected. Higher is better.*
-
-*\***Optimal Threshold** — the detection threshold that maximizes recall while keeping FPPH at or below the target (configurable, default 0.1). A threshold of 0.01 indicates no threshold could meet the FPPH target — the evaluator fell back to the highest balanced accuracy.*
-
-### Why conv-attention wins
-
-- **Temporal awareness** — the conv-attention model sees the *order* of speech events, not just their presence, reducing false triggers from phonetically similar but differently ordered phrases.
-- **Better accuracy at the same model size** — attention lets a small model selectively focus on discriminative time regions rather than learning dense connections over the full flattened input.
-- **Lower false-positive rates** — temporal structure helps reject partial or reordered matches that a flat DNN would accept.
-
-The conv-attention head is the default. You can switch to the original DNN or an RNN head via `model_type` in your config:
-
-```yaml
-model:
-  model_type: conv_attention  # conv_attention (default) | dnn | rnn
-  model_size: small           # tiny, small, medium, large
-```
+> **TODO:** This has not been verified yet, but exported TFLite models should be compatible with [microWakeWord](https://github.com/kahrendt/microWakeWord) and ESPHome's microWakeWord component. Both projects use the same TFLite Micro microfrontend (30ms window, 20ms hop, 40 mel channels) and the same model interface — input `(1, N_frames, 40)` spectrograms, output `(1, 1)` confidence score. Models trained here should be drop-in replacements on the inference side.
 
 ## Detailed Documentation
-
-If you want to understand more about how this library works:
 
 - [Architecture Overview](docs/overview.md) — system design and data flow
 - [Data Generation](docs/data-generation.md) — TTS synthesis and adversarial negatives
 - [Augmentation](docs/augmentation.md) — audio transforms and alignment
-- [Feature Extraction](docs/feature-extraction.md) — mel spectrograms and embeddings
-- [Training](docs/training.md) — 3-phase training and checkpoint averaging
-- [Export & Inference](docs/export-and-inference.md) — ONNX export and Python API
+- [Feature Extraction](docs/feature-extraction.md) — micro-speech spectrogram frontend
+- [Training](docs/training.md) — 3-phase training, classifier architectures, and checkpoint averaging
+- [Export & Inference](docs/export-and-inference.md) — TFLite export (with RepCNN branch fusion) and streaming inference
 - [Evaluation](docs/evaluation.md) — DET curves, AUT, and model comparison
 
 ## License

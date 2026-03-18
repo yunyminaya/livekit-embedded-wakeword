@@ -2,7 +2,7 @@
 
 The training stage uses a 3-phase adaptive approach with focal loss, spectrogram mixup, AdamW optimization, and checkpoint averaging, implemented in TensorFlow/Keras.
 
-**Source:** `src/livekit/wakeword/training/trainer.py`, `src/livekit/wakeword/training/metrics.py`
+**Source:** `src/livekit/embedded_wakeword/training/trainer.py`, `src/livekit/embedded_wakeword/training/metrics.py`
 **CLI:** `livekit-wakeword train <config>`
 
 ## Overview
@@ -162,7 +162,7 @@ The Beta(0.2, 0.2) distribution produces mixing coefficients that are usually cl
 
 ### Metrics
 
-**Source:** `src/livekit/wakeword/training/metrics.py`
+**Source:** `src/livekit/embedded_wakeword/training/metrics.py`
 
 | Metric | Function | Description |
 |--------|----------|-------------|
@@ -237,11 +237,11 @@ The negative speech features (if available) provide general audio spectrograms a
 | `target_fp_per_hour` | 0.2 |
 | `batch_n_per_class.positive` | 50 |
 | `batch_n_per_class.adversarial_negative` | 50 |
-| `batch_n_per_class.negative_speech` | 1024 |
+| `batch_n_per_class.negative_speech` | 128 |
 
 ## Classifier Architectures
 
-Two classifier types are available, both taking input `(batch, 99, 40)` spectrogram features and producing `(batch, 1)` scores.
+Four classifier types are available, all taking input `(batch, 99, 40)` spectrogram features and producing `(batch, 1)` scores. Select via `model.model_type` in config.
 
 ### Inception (`model_type: inception`)
 
@@ -268,7 +268,40 @@ Input (99, 40) → expand to (99, 40, 1)
 → GlobalAveragePool → Dropout → Dense(1, sigmoid)
 ```
 
+### RepCNN (`model_type: repcnn`)
+
+RepVGG-style depthwise-separable CNN with temporal dilation. Multi-branch training architecture that fuses into plain convolutions at export for efficient embedded inference.
+
+```
+Training:
+Input (99, 40) → expand to (99, 40, 1)
+→ Conv2D(3×3) + BN + ReLU
+→ RepDS blocks: 3 DW branches (3×3 dilated + 1×1 + identity) + BN → sum → ReLU → PW Conv + BN → ReLU
+→ GlobalAveragePool → Dropout → Dense(1, sigmoid)
+
+Export (fused):
+→ Single DW-Conv(3×3, dilated) + PW-Conv(1×1) per block — no BatchNorm
+```
+
+Temporal dilations cycle `[1, 2, 4]` across blocks for multi-scale context. At export, `reparameterize_model()` fuses the three depthwise branches and all BatchNorm layers into single DW-Conv + PW-Conv pairs. This produces a BN-free model optimized for ESP32-S3 SIMD execution.
+
+### WakeNet9 (`model_type: wakenet9`)
+
+1D CNN with Linear Gated Linear Unit (LiGLU) blocks and causal dilated depthwise convolutions. Operates entirely in 1D (time × channels), avoiding the 2D reshape used by other architectures.
+
+```
+Input (99, 40)
+→ Conv1D(1) + Swish + LayerNorm
+→ LiGLU blocks: gate projection (2× expand) → GLU → causal DW Conv1D(5) → LayerNorm → Swish → output projection
+→ Long-range residual (penultimate → final block output)
+→ GlobalAveragePool1D → Dropout → Dense(1, sigmoid)
+```
+
+Dilation pattern cycles `(1, 2, 3, 4, 3)` across blocks. Causal left-padding ensures the model only depends on past frames, making it streaming-friendly. A long-range residual connection from the penultimate to the final block (when `n_blocks >= 3`) improves gradient flow in deeper configurations.
+
 ### Size Presets
+
+**Default presets** (used by RepCNN, MixedNet, WakeNet9):
 
 | Size | filters | n_blocks |
 |------|---------|----------|
@@ -276,6 +309,19 @@ Input (99, 40) → expand to (99, 40, 1)
 | small | 16 | 3 |
 | medium | 24 | 5 |
 | large | 32 | 7 |
+| xlarge | 48 | 9 |
+| xxlarge | 64 | 11 |
+
+**Inception presets** (calibrated so each tier produces a similar TFLite model size — Inception's 3-branch concat has ~35x more params per filter/block):
+
+| Size | filters | n_inception_blocks | ~TFLite size |
+|------|---------|-------------------|-------------|
+| tiny | 4 | 1 | ~3 KB |
+| small | 6 | 1 | ~9 KB |
+| medium | 6 | 3 | ~24 KB |
+| large | 8 | 4 | ~61 KB |
+| xlarge | 10 | 6 | ~133 KB |
+| xxlarge | 14 | 6 | ~256 KB |
 
 ## Output
 
