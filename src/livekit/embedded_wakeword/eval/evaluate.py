@@ -216,17 +216,17 @@ def run_eval(config: WakeWordConfig, model_path: str | Path) -> dict[str, float]
     # Compute AUT
     aut = _compute_aut(fpr, fnr)
 
-    # Find optimal threshold and compute summary metrics
+    # Compute summary metrics at fixed threshold 0.5
     clip_duration = config.augmentation.clip_duration
     validation_hours = neg_features.shape[0] * clip_duration / 3600.0
 
-    from ..training.metrics import find_best_threshold
+    from ..training.metrics import evaluate_model
 
-    optimal = find_best_threshold(
+    optimal = evaluate_model(
         pos_scores,
         neg_scores,
+        threshold=0.5,
         validation_hours=validation_hours,
-        target_fpph=config.target_fp_per_hour,
     )
 
     # Build results
