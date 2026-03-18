@@ -444,6 +444,33 @@ def eval(
     logger.info(f"DET curve: {config.model_output_dir / f'{config.model_name}_det.png'}")
 
 
+def _generate_worker(config_path: str) -> None:
+    """Subprocess target: load config and run VITS TTS data generation."""
+    config = load_config(config_path)
+    from .data.generate import run_generate
+
+    run_generate(config)
+
+
+def _run_generate_subprocess(config_path: str) -> None:
+    """Run data generation in a child process to fully isolate PyTorch memory.
+
+    VITS TTS loads PyTorch + torchaudio + a ~700 MB model, allocating ~2-3 GB
+    of CPU memory (plus a CUDA context) that cannot be fully reclaimed within
+    the same process. Running in a subprocess ensures all of this memory is
+    returned to the OS before TensorFlow training starts — without this, larger
+    architectures (e.g. WakeNet9 xxlarge) OOM on 64 GB nodes.
+    """
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    proc = ctx.Process(target=_generate_worker, args=(config_path,))
+    proc.start()
+    proc.join()
+    if proc.exitcode != 0:
+        raise RuntimeError(f"Data generation failed (subprocess exit code {proc.exitcode})")
+
+
 @app.command()
 def run(
     config_path: str = typer.Argument(..., help="Path to wake word config YAML"),
@@ -452,6 +479,11 @@ def run(
     config = load_config(config_path)
 
     logger.info(f"Running full pipeline for '{config.model_name}'...")
+
+    # Step 1: Run generation in a subprocess so PyTorch + VITS model memory
+    # is fully reclaimed by the OS before TensorFlow training starts.
+    logger.info("Step 1/6: Generate synthetic data (subprocess)")
+    _run_generate_subprocess(config_path)
 
     # Configure GPU before any TF imports to ensure memory growth is set
     from .config import ModelType
@@ -463,31 +495,9 @@ def run(
 
     from .data.augment import run_augment
     from .data.features import run_extraction
-    from .data.generate import run_generate
     from .eval.evaluate import run_eval
     from .export.tflite import run_export
     from .training.trainer import run_train
-
-    logger.info("Step 1/6: Generate synthetic data")
-    run_generate(config)
-
-    # Free PyTorch GPU memory before TensorFlow training starts.
-    # PyTorch's CUDA context holds onto VRAM even after tensors are freed;
-    # without this, TF sees reduced VRAM and larger models OOM.
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-            # Force-delete the CUDA context so TF gets full VRAM
-            import gc
-
-            gc.collect()
-            torch.cuda.reset_peak_memory_stats()
-            logger.info("Cleared PyTorch CUDA cache")
-    except ImportError:
-        pass
 
     logger.info("Step 2/6: Augment clips")
     run_augment(config)

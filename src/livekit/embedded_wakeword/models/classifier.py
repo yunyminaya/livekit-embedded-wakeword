@@ -641,13 +641,16 @@ class LiGLUBlock(tf.keras.layers.Layer):  # type: ignore[misc]
         # Phase 1: Gate projection (pointwise expand to 2x for GLU)
         self.gate_proj = tf.keras.layers.Conv1D(ch * 2, 1, name="gate_proj")
 
-        # Phase 3: Causal depthwise conv
-        self.dw_conv = tf.keras.layers.Conv1D(
-            ch,
-            kernel_size=5,
-            groups=ch,
-            dilation_rate=self._dilation_rate,
+        # Phase 3: Causal depthwise conv — use DepthwiseConv2D instead of
+        # Conv1D(groups=ch). TF has no native DepthwiseConv1D; Conv1D with
+        # groups=ch gets decomposed by XLA into ch separate convolutions,
+        # bloating the HLO graph and using ~2-4 GB extra host memory during
+        # compilation.  DepthwiseConv2D has a dedicated XLA lowering.
+        self.dw_conv = tf.keras.layers.DepthwiseConv2D(
+            (5, 1),
+            dilation_rate=(self._dilation_rate, 1),
             padding="valid",
+            depth_multiplier=1,
             name="dw_conv",
         )
 
@@ -679,7 +682,10 @@ class LiGLUBlock(tf.keras.layers.Layer):  # type: ignore[misc]
         # For kernel_size=5 and dilation_rate=d, receptive field = (5-1)*d = 4*d
         pad_len = (5 - 1) * self._dilation_rate
         x = tf.pad(x, [[0, 0], [pad_len, 0], [0, 0]])
+        # Reshape (B, T, C) → (B, T, 1, C) for DepthwiseConv2D, then squeeze back
+        x = tf.expand_dims(x, axis=2)
         x = self.dw_conv(x)
+        x = tf.squeeze(x, axis=2)
 
         # Phase 4: LayerNorm
         x = self.layer_norm(x)
