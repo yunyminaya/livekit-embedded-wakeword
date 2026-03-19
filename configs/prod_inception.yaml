@@ -95,8 +95,8 @@ model:
 steps: 100000
 learning_rate: 0.0001
 weight_decay: 0.01
-label_smoothing: 0.05
-max_negative_weight: 1500
+label_smoothing: 0.0
+max_negative_weight: 5
 target_fp_per_hour: 0.1
 
 batch_n_per_class:
