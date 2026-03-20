@@ -1,0 +1,46 @@
+model_name: hey_livekit_wakenet9_test
+
+target_phrases: ["hey livekit"]
+
+n_samples: 50
+n_samples_val: 10
+tts_batch_size: 10
+
+custom_negative_phrases:
+  - "livekit"
+  - "hey libby"
+  - "hey liquid"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [1.0]
+slerp_weights: [0.5]
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 1
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+  window_size_ms: 30
+  window_step_ms: 20
+  num_channels: 40
+
+model:
+  model_type: wakenet9
+  model_size: small
+
+steps: 100
+learning_rate: 0.001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 10
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 10
+  adversarial_negative: 10
+  negative_speech: 0

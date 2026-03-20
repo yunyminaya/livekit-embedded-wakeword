@@ -6,7 +6,7 @@ from pathlib import Path
 from livekit.embedded_wakeword import WakeWordModel
 from livekit.embedded_wakeword.inference import WakeWordListener
 
-model = WakeWordModel(models=[Path(__file__).parent / "resources" / "hey_livekit.onnx"])
+model = WakeWordModel(models=[Path(__file__).parent / "resources" / "hey_livekit_wakenet9_int8.tflite"])
 
 
 async def main():
