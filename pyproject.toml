@@ -87,7 +87,7 @@ include = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=4.0", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.8"]
+dev = ["pytest>=9.0.3", "pytest-cov>=4.0", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
