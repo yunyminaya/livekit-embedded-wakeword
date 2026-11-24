@@ -54,7 +54,7 @@ train = [
     "mmap-ninja>=0.7",
 ]
 datagen = [
-    "torch>=2.2",
+    "torch>=2.13.0",
     "torchaudio>=2.2",
 ]
 eval = [
